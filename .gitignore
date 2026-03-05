@@ -4,5 +4,5 @@
 /data
 /plots
 preprocessing/output_pickles/
-.docx
-.csv
+*.docx
+*.csv
