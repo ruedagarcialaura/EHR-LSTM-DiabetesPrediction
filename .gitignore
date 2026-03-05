@@ -1,1 +1,8 @@
+#Ignore these files and folders as they contain large data,
+# intermediate results, or outputs that are not relevant for version control.
+
 /data
+/plots
+preprocessing/output_pickles/
+.docx
+.csv
