@@ -72,6 +72,7 @@ import copy
 import os
 import sys
 import matplotlib.pyplot as plt
+import tqdm
 
 # =============================================================================
 # 1. Load Z-Score Normalized Data
@@ -83,11 +84,11 @@ file_path_znormalized_clinical = os.path.join(input_dir, "5_patients_filtered_cl
 
 
 try:
-    with open(file_path_znormalized_clinical, "rb") as file:
+    with open(file_path_znormalized_categories, "rb") as file:
         normalized_matrices_with_nans = pickle.load(file)
-    print(f" Z-score normalized data loaded successfully from '{file_path_znormalized_clinical}'.")
+    print(f" Z-score normalized data loaded successfully from '{file_path_znormalized_categories}'.")
 except FileNotFoundError:
-    print(f" Error: Input file not found at {file_path_znormalized_clinical}")
+    print(f" Error: Input file not found at {file_path_znormalized_categories}")
     sys.exit()
 
 
@@ -105,7 +106,7 @@ categorized_features_list = [
 # =============================================================================
 def prepare_data(normalized_matrices):
     sequences, masks, patient_ids = [], [], []
-    for pid, df in normalized_matrices.items():
+    for pid, df in tqdm.tqdm(normalized_matrices.items(), desc="Preparing data", colour='magenta'):
         sequence_data = df.values.T
         if sequence_data.shape[0] > 0:
             mask = (~np.isnan(sequence_data)).astype(float)
@@ -234,43 +235,6 @@ for epoch in range(num_epochs):
         early_stopper.restore_best_weights(model)
         break
 
-# =============================================================================
-# 7. Imputation Function & REAL Validation
-# =============================================================================
-'''def run_imputation_and_validation(normalized_matrices, model):
-    model.eval()
-    imputed_dict = {}
-    actual_performance_errors = []
-
-    for pid, df in normalized_matrices.items():
-        original_seq_with_nans = df.values.T
-        if original_seq_with_nans.shape[0] == 0:
-            imputed_dict[pid] = df
-            continue
-            
-        # Prepare Data
-        original_mask = (~np.isnan(original_seq_with_nans)).astype(float)
-        seq_filled = np.nan_to_num(original_seq_with_nans, nan=0.0)
-        seq_tensor = torch.tensor(seq_filled, dtype=torch.float32).unsqueeze(0)
-
-        # Get Raw Prediction for validation
-        with torch.no_grad():
-            raw_reconstruction = model(seq_tensor).squeeze(0).numpy()
-
-        # VALIDATION: Compare raw prediction vs original values only where data existed
-        known_indices = (original_mask == 1)
-        if np.any(known_indices):
-            mse = np.mean((original_seq_with_nans[known_indices] - raw_reconstruction[known_indices])**2)
-            actual_performance_errors.append(np.sqrt(mse))
-
-        # HYBRIDIZATION: Use original values where known, reconstructed where missing
-        final_imputed_seq = np.where(known_indices, original_seq_with_nans, raw_reconstruction)
-        
-        df_imputed = pd.DataFrame(final_imputed_seq.T, index=df.index, columns=df.columns)
-        imputed_dict[pid] = df_imputed
-        
-    print(f"\n REAL Model Performance (RMSE on known values): {np.mean(actual_performance_errors):.4f}")
-    return imputed_dict'''
 
 # Apply logic
 print("\n Applying Imputation ")
@@ -286,7 +250,7 @@ def run_imputation_and_validation(normalized_matrices, model, categorized_featur
     total_cells = 0
     total_nans_before = 0
 
-    for pid, df in normalized_matrices.items():
+    for pid, df in tqdm.tqdm(normalized_matrices.items(), desc="Processing patients", colour='cyan'):
         original_seq_with_nans = df.values.T
         if original_seq_with_nans.shape[0] == 0:
             imputed_dict[pid] = df
@@ -366,7 +330,7 @@ except Exception as e:
 # 9) Visualize results for one patient 
 # =============================================================================
 
-# take first patient for visualization
+# Take first patient for visualization
 first_pid = next(iter(imputed_patients_matrices))
 df_imputed = imputed_patients_matrices[first_pid]
 df_original = normalized_matrices_with_nans[first_pid]
@@ -382,31 +346,22 @@ print("="*80)
 
 n_rows = 60
 n_cols = 3
-preview = df_imputed.iloc[:n_rows, :n_cols].copy()
+preview = df_imputed.iloc[:n_rows, :n_cols].copy().astype(object)
 mask_preview = was_imputed.iloc[:n_rows, :n_cols]
 
-# 4. Loop through the preview and add asterisks to imputed values
-for r in range(preview.shape[0]):
+# Loop through the preview and add asterisks to imputed values
+for r in tqdm.tqdm(range(preview.shape[0]), desc="Formatting preview", colour='yellow'):
     for c in range(preview.shape[1]):
-        # If the original value was NaN, we mark it with an asterisk
-        if mask_preview.iat[r, c]:
-            val = preview.iat[r, c]
+        val = preview.iat[r, c]
+        if pd.isna(val): # Manejo de seguridad por si quedara algún NaN
+            preview.iloc[r, c] = "NaN"
+        elif mask_preview.iat[r, c]:
+            # Ahora Pandas permite esto porque el dtype es 'object'
             preview.iloc[r, c] = f"{val:.2f}*"
         else:
-            # If it was not NaN, we just format it without an asterisk
-            val = preview.iat[r, c]
             preview.iloc[r, c] = f"{val:.2f}"
 
 print(preview.to_string())
 
 
 
-#Before:
-'''patient_df = pd.DataFrame.from_dict(imputed_patients_matrices[first_pid], orient='index')
-patient_df = patient_df.sort_index(key=lambda idx: idx.map(str))
-
-num_visits_to_show = min(3, patient_df.shape[1])
-preview_table = patient_df.iloc[:60, :num_visits_to_show]
-
-print(f" TABLE PREVIEW FOR PATIENT (ID: {first_pid}) ")
-print(preview_table.to_string())'''

@@ -138,7 +138,7 @@ class Config:
 config = Config()
 
 
-# %% 🧬 Load Data and Preprocess Labels
+# %%   NEW: Load Data and Preprocess Labels
 try:
     with open(config.patient_data_path_clinical, "rb") as file:
         imputed_patients_matrices_all = pickle.load(file)
@@ -156,7 +156,7 @@ dx_date_dict = df2_filtered.set_index('PATIENT_ID')['EARLIEST_DX'].dt.date.to_di
 
 
 
-# %% 📊  NEW: Compare T2D Counts from Different Sources 
+# %%   NEW: Compare T2D Counts from Different Sources 
 print("\n Comparing T2D Patient Counts ")
 try:
     # Load the demographics data from the CSV file
@@ -175,8 +175,6 @@ try:
     demo_df_filtered = demo_df[demo_df['PATIENT_ID'].isin(imputed_patients)]
     
     # Count T2D patients based on AIM_GROUP
-    # IMPORTANT: Verify 'Type 2 Diabetes' is the exact string in your AIM_GROUP column
-    # This will correctly find the T2D patients
     t2d_from_demo = demo_df_filtered[demo_df_filtered['AIM_GROUP'] == '2_Type2']
     t2d_from_demo_count = len(t2d_from_demo['PATIENT_ID'].unique())
     
@@ -194,7 +192,7 @@ except KeyError as e:
 except Exception as e:
     print(f" An error occurred during the comparison: {e}")
 
-# %% 🩺  NEW: Analyze T2D Patient Visit Counts 
+# %%  Analyze T2D Patient Visit Counts 
 print("\n Analyzing Visit Counts for T2D Patients ")
 # Get the set of T2D patient IDs from the reliable dx_date_dict
 t2d_patient_ids = set(dx_date_dict.keys())
@@ -223,10 +221,10 @@ if visit_counts:
     plt.show()
 else:
     print("No T2D patients found in the dataset to analyze.")
-# %% 📋 Prepare Visit-Level Sequences and Labels for Prediction
+# %%  Prepare Visit-Level Sequences and Labels for Prediction
 print("Extracting features dynamically and cleaning NaNs...")
 
-#  DETECCIÓN DINÁMICA DE TAMAÑOS 
+#  Dynamic feature detection based on the first patient's DataFrame structure 
 first_pid = next(iter(imputed_patients_matrices_all))
 all_cols = imputed_patients_matrices_all[first_pid].index
 seq_indices = [idx for idx in all_cols if idx not in config.DEMO_COLUMNS]
@@ -234,15 +232,15 @@ seq_indices = [idx for idx in all_cols if idx not in config.DEMO_COLUMNS]
 config.SEQ_INPUT_SIZE = len(seq_indices)
 config.DEMO_INPUT_SIZE = len(config.DEMO_COLUMNS)
 
-print(f"📊 Red configurada: {config.SEQ_INPUT_SIZE} variables secuenciales, {config.DEMO_INPUT_SIZE} demográficas.")
+print(f" Configured network: {config.SEQ_INPUT_SIZE} secuential variables (may vary with each visit), {config.DEMO_INPUT_SIZE} demographic variables.")
 
 X_sequential, X_demographics, y_patient_labels = [], [], []
 pids_per_sample = [] 
 eliminated_t2d_patients = []
 
 for pid, df_patient in imputed_patients_matrices_all.items():
-    # 1. Extraer y limpiar de NaNs (rellenamos con 0.0)
-    # Rellenamos NaNs para evitar que el modelo explote (Train Loss: nan)
+    # 1. Extract and clean NaNs (fill with 0.0)
+    # Fill NaNs to avoid the model from not converging (Train Loss: nan)
     df_cleaned = df_patient.fillna(0.0)
     
     demo_features = df_cleaned.loc[config.DEMO_COLUMNS].iloc[:, 0].values
@@ -274,7 +272,7 @@ for pid, df_patient in imputed_patients_matrices_all.items():
             pids_per_sample.append(pid)
 
 print(f" Visit-level sequences prepared. Total training samples created: {len(y_patient_labels)}.")
-# %% ⚖️ Undersampling to a 2:1 Ratio (Healthy:T2D)
+# %%  Undersampling to a 1:1 Ratio (Healthy:T2D)
 from imblearn.under_sampling import RandomUnderSampler
 from collections import Counter
 
@@ -282,9 +280,7 @@ print("Original dataset composition:")
 original_counts = Counter(y_patient_labels)
 print(pd.Series(y_patient_labels).value_counts())
 
-# The sampling_strategy of 0.5 means the number of samples in the minority class (1)
-# will be 50% of the number of samples in the majority class (0).
-# This creates the desired 2:1 ratio.
+# This creates the desired 1:1 ratio.
 rus = RandomUnderSampler(sampling_strategy=1, random_state=config.RANDOM_STATE)
 
 # We provide the feature data and labels to the resampler
@@ -302,9 +298,10 @@ X_demo_balanced = [X_demographics[i] for i in resampled_indices]
 y_balanced = y_balanced_np.tolist()
 
 print(f"\n Data re-sampled with RandomUnderSampler. Original samples: {len(y_patient_labels)} -> New samples: {len(y_balanced)}")
-print("New dataset composition (Healthy:T2D ratio should be approx. 2:1):")
+print("New dataset composition (Healthy:T2D ratio should be approx. 1:1):")
 print(pd.Series(y_balanced).value_counts())
-# %% 🔎  NEW: Inspect a Single Patient's Timeline 
+
+'''# %%  Inspect a Single Patient's Timeline 
 print("\n Single Patient Timeline Inspection ")
 
 # <<< CHANGE THIS VALUE to the Patient ID you want to inspect
@@ -332,9 +329,9 @@ if patient_id_to_check in imputed_patients_matrices_all:
         print(f"    - Visit {i}: {visit_date}")
         
 else:
-    print(f" Error: Patient with ID {patient_id_to_check} not found in the dataset.")
+    print(f" Error: Patient with ID {patient_id_to_check} not found in the dataset.")'''
 
-# %% 🔪 Train-Validation-Test Split
+# %%  Train-Validation-Test Split
 sss = StratifiedShuffleSplit(n_splits=1, test_size=config.TEST_SPLIT_SIZE, random_state=config.RANDOM_STATE)
 train_idx, temp_idx = next(sss.split(X_demo_balanced, y_balanced)) # Stratify on demo data
 val_idx = temp_idx[:len(temp_idx) // 2]
@@ -350,8 +347,7 @@ X_train_seq, X_train_demo, y_train = get_data(train_idx)
 X_val_seq, X_val_demo, y_val = get_data(val_idx)
 X_test_seq, X_test_demo, y_test = get_data(test_idx)
 
-#%%
-# %% 📈 Split Statistics + LaTeX Section
+# %%  Split Statistics + LaTeX Section
 from collections import Counter
 import os
 
@@ -390,7 +386,7 @@ with open(out_path, "w", encoding="utf-8") as f:
     f.write(latex_section)
 print(f"Saved LaTeX subsection to: {out_path}")
 
-# %% 📦 PyTorch Dataset and Dataloader
+# %%  PyTorch Dataset and Dataloader
 class PatientDataset(Dataset):
     def __init__(self, seq_data, demo_data, labels):
         self.seq_data = seq_data
@@ -415,7 +411,7 @@ def collate_fn(batch):
     
     return seq_padded, demo_tensor, labels_tensor, lengths
 
-# %% 🤖 Define Hybrid LSTM-DNN Model
+# %%  Define Hybrid LSTM-DNN Model
 class PatientRiskModel(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -472,7 +468,7 @@ def train_model(model, train_loader, val_loader, config):
     optimizer = optim.Adam(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
     
     best_val_loss, patience_counter = float('inf'), 0
-    print(f"⚖️ Using positive class weight: {pos_weight.item():.2f}")
+    print(f" Using positive class weight: {pos_weight.item():.2f}")
 
     for epoch in range(config.EPOCHS):
         model.train()
@@ -502,15 +498,14 @@ def train_model(model, train_loader, val_loader, config):
         else:
             patience_counter += 1
             if patience_counter >= config.PATIENCE:
-                print(f"⏳ Early stopping triggered after {epoch+1} epochs.")
+                print(f" Early stopping triggered after {epoch+1} epochs.")
                 break
 
     if 'best_model_state' in locals():
         model.load_state_dict(best_model_state)
     return model
 
-# %% 📊 Evaluation Function
-
+# %%  Evaluation Function
 def evaluate(model, data_loader, threshold=0.5):
     model.eval()
     y_true, y_pred, y_prob = [], [], []
@@ -538,6 +533,20 @@ def evaluate(model, data_loader, threshold=0.5):
     disp.plot(cmap='Blues', values_format='d')
     plt.title("Confusion Matrix (Patient-Level)")
     #plt.show()
+
+# %% --- 10 ITERATIONS TO CHECK MODEL STABILITY ---
+NUM_ITERATIONS = 10
+all_metrics = {'acc': [], 'auc': [], 'prec': [], 'rec': [], 'f1': []}
+
+print(f" Starting {NUM_ITERATIONS} iterations...")
+# -----------------------
+
+for i in range(NUM_ITERATIONS):
+    print(f"\n--- Iteration {i+1}/{NUM_ITERATIONS} ---")
+    
+    current_seed = config.RANDOM_STATE + i
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=config.TEST_SPLIT_SIZE, random_state=current_seed)
+    # Re-ejecuta el split y get_data aquí dentro (copia las líneas de tu split original)
 
 # Run Model Training and Evaluation
 model = PatientRiskModel(config)
@@ -572,3 +581,5 @@ try:
 
 except Exception as e:
     print(f" An error occurred during external evaluation: {e}")
+
+

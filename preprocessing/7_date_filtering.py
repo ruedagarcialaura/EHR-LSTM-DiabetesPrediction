@@ -84,11 +84,11 @@ file_path_categorized = r"preprocessing\output_pickles\6_imputed_normalized_data
 file_path_standard= r"preprocessing\output_pickles\6_imputed_normalized_data_standard.pkl"
 
 try:
-    with open(file_path_clinical, "rb") as file:
+    with open(file_path_categorized, "rb") as file:
         imputed_patients_matrices_all = pickle.load(file)
         print("File successfully loaded.")
 except FileNotFoundError:
-    print(f"Error: File not found at the specified path.\nPlease check the path: {file_path_clinical}")
+    print(f"Error: File not found at the specified path.\nPlease check the path: {file_path_categorized}")
 except Exception as e:
     print(f"An error occurred while loading the file: {e}")
 

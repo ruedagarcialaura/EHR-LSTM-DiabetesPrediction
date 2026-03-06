@@ -89,7 +89,7 @@ patient_data_combined = {}
 demographics_df.index = demographics_df.index.astype(int)  # Ensure index is integer for matching
 
 # Iterate through each patient's lab/vital data
-for pid, lab_vital_df in tqdm.tqdm(patient_matrices.items(), desc="Combining patient data"):
+for pid, lab_vital_df in tqdm.tqdm(patient_matrices.items(), desc="Combining patient data", colour='blue'):
     # Check if the patient exists in the demographic data
     if pid not in demographics_df.index:
         continue
@@ -137,11 +137,11 @@ print("-\n")
 features_to_remove = missing_report_df[missing_report_df['Missing_Percentage'] > 75]['Feature'].tolist()
 
 if features_to_remove:
-    print(f"🗑️ Identifying {len(features_to_remove)} features to remove due to >75% missingness.")
+    print(f" Identifying {len(features_to_remove)} features to remove due to >75% missingness.")
 
     # Create a new dictionary for the filtered data
     patients_filtered = {}
-    for pid, data in tqdm.tqdm(patient_data_combined.items(), desc="Filtering features"):
+    for pid, data in tqdm.tqdm(patient_data_combined.items(), desc="Filtering features", colour='magenta'):
         # Drop the identified rows from each patient's DataFrame
         filtered_data = data.drop(labels=features_to_remove, errors='ignore')
         patients_filtered[pid] = filtered_data

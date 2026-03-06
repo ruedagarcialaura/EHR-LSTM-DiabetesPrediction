@@ -2,7 +2,6 @@
 # intermediate results, or outputs that are not relevant for version control.
 
 /data
-/plots
+/generatePlots/plots
 preprocessing/output_pickles/
-*.docx
 *.csv
