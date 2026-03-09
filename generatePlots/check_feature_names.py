@@ -2,7 +2,7 @@ import pickle
 import pandas as pd
 import matplotlib.pyplot as plt
 
-input_path = r"preprocessing\output_pickles\patients_filtered_unnormalized.pkl"
+input_path = r"preprocessing\output_pickles\4_patients_filtered_unnormalized_100.pkl"
 
 
 BINS_THRESHOLDS = {
@@ -20,7 +20,33 @@ BINS_THRESHOLDS = {
     'VITAL_10541503_MEAN': [12, 20],
     'VITAL_266705352_MEAN': [90, 92, 94, 97, 100],
     'VITAL_283305634_MEAN': [97.0, 99.1, 100.6, 102.4, 105.8],
-    'VITAL_68924855_MEAN': [120, 130, 140, 180]
+    'VITAL_68924855_MEAN': [120, 130, 140, 180],
+
+    # new categorization thresholds added for 7 more features (when >75% missingness eliminated only up to these variables are needed)
+    'LDL-POCT': [100, 130, 160, 190],
+    'VITAL_10541029_MEAN': [90, 120, 140, 160],
+    'VITAL_14049215_MEAN': [1.6, 1.9],
+    'VITAL_279181488_MEAN': [150, 180],
+    'VITAL_283303272_MEAN': [50, 86, 101],
+    'VITAL_34506073_MEAN': [12, 20],
+    'VITAL_68924858_MEAN': [90, 95],
+
+    # rest of the variables
+    'ALB CONC': [3.4, 5.4],
+    'FERRITIN': [20, 250],
+    'INR': [0.8, 1.1, 3.0],
+    'PROTHROMBIN TIME': [11, 13.5],
+    'UR CREATININE': [500, 2000],
+    'UR TOTAL PROTEIN': [150, 500],
+    'm_Bilirubin.direct': [0.3],
+    'VITAL_10155324_MEAN': [1, 4, 7],
+    'VITAL_10155611_MEAN': [1, 7],
+    'VITAL_10155613_MEAN': [0.22, 0.50],
+    'VITAL_10541434_MEAN': [52, 58],
+    'VITAL_10541511_MEAN': [90, 95],
+    'VITAL_10541524_MEAN': [35.0, 37.5],
+    'VITAL_10541596_MEAN': [9, 13],
+    'VITAL_14049161_MEAN': [40, 60]
 }
 
 

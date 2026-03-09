@@ -79,6 +79,7 @@ OUTPUT:
 """
 Created on Thu Jul 24 09:39:15 2025
 @author: inanc
+@changes by: Laura Rueda
 @description: Hybrid LSTM-DNN with Masked Training. 
 Demographics defined by titles; all other rows treated as sequential.
 """
@@ -98,13 +99,14 @@ import matplotlib.pyplot as plt
 from imblearn.under_sampling import RandomUnderSampler
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
+import tqdm
 
 # %%  Configuration & Hyperparameters 
 
 class Config:
-    patient_data_path = r"preprocessing\output_pickles\filtered_patient_groups\regular_patients_1_year.pkl"
-    earliest_dx_path = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\EARLIEST_DX_deid.csv"
-    external_test_path = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\matched_test.csv"
+    patient_data_path = r"preprocessing\output_pickles\7_filtered_patient_groups_clinical_NoImputed_100\regular_patients_1_year.pkl"
+    earliest_dx_path = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\EARLIEST_DX_deid.csv"
+    external_test_path = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\matched_test.csv"
     
     #  DEFINE DEMO COLUMNS ONLY 
     DEMO_COLUMNS = [
@@ -132,7 +134,7 @@ class Config:
 
 config = Config()
 
-# %% 🧬 Load Data
+# %%  Load Data
 try:
     with open(config.patient_data_path, "rb") as file:
         imputed_patients_matrices_all = pickle.load(file)
@@ -149,7 +151,7 @@ imputed_patients = set(imputed_patients_matrices_all.keys())
 df2_filtered = df2_earliest[df2_earliest['PATIENT_ID'].isin(imputed_patients)]
 dx_date_dict = df2_filtered.set_index('PATIENT_ID')['EARLIEST_DX'].dt.date.to_dict()
 
-# %% 📋 Prepare Visit-Level Sequences with Dynamic Extraction
+# %%  Prepare Visit-Level Sequences with Dynamic Extraction
 print("Extracting demographics by title. Remaining rows are sequential...")
 
 X_sequential, X_demographics, y_patient_labels = [], [], []
@@ -163,9 +165,9 @@ config.ORIGINAL_SEQ_SIZE = len(seq_indices)
 config.SEQ_INPUT_SIZE = config.ORIGINAL_SEQ_SIZE * 2 
 config.DEMO_INPUT_SIZE = len(config.DEMO_COLUMNS)
 
-print(f"📊 Features detected: {len(seq_indices)} sequential, {len(config.DEMO_COLUMNS)} demographic.")
+print(f" Features detected: {len(seq_indices)} sequential, {len(config.DEMO_COLUMNS)} demographic.")
 
-for pid, df_patient in imputed_patients_matrices_all.items():
+for pid, df_patient in tqdm.tqdm(imputed_patients_matrices_all.items(), desc="Processing Patients", colour= 'cyan'):
     demo_features = df_patient.loc[config.DEMO_COLUMNS].iloc[:, 0].values
     seq_raw = df_patient.loc[seq_indices].T.values 
     
@@ -195,7 +197,7 @@ for pid, df_patient in imputed_patients_matrices_all.items():
             y_patient_labels.append(0)
             pids_per_sample.append(pid)
 
-# %% ⚖️ Undersampling and Splitting
+# %%  Undersampling and Splitting
 rus = RandomUnderSampler(sampling_strategy=1.0, random_state=config.RANDOM_STATE)
 all_indices = np.arange(len(y_patient_labels)).reshape(-1, 1)
 resampled_indices_flat, y_balanced_raw = rus.fit_resample(all_indices, y_patient_labels)
@@ -217,7 +219,7 @@ X_train_seq, X_train_demo, y_train = get_data(train_idx)
 X_val_seq, X_val_demo, y_val = get_data(val_idx)
 X_test_seq, X_test_demo, y_test = get_data(test_idx)
 
-# %% 📦 PyTorch Dataset and Dataloader
+# %%  PyTorch Dataset and Dataloader
 class PatientDataset(Dataset):
     def __init__(self, seq_data, demo_data, labels):
         self.seq_data = seq_data
@@ -239,7 +241,7 @@ train_loader = DataLoader(PatientDataset(X_train_seq, X_train_demo, y_train), ba
 val_loader = DataLoader(PatientDataset(X_val_seq, X_val_demo, y_val), batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
 test_loader = DataLoader(PatientDataset(X_test_seq, X_test_demo, y_test), batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
 
-# %% 🤖 Model Definition
+# %%  Model Definition
 class PatientRiskModel(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -270,7 +272,7 @@ class PatientRiskModel(nn.Module):
         combined_embedding = torch.cat((seq_embedding, demo_embedding), dim=1)
         return self.classifier(combined_embedding).squeeze(-1)
 
-# %% 🚀 Training and Evaluation Functions
+# %%  Training and Evaluation Functions
 def train_model(model, train_loader, val_loader, config):
     train_labels = np.array(train_loader.dataset.labels)
     pos_weight = torch.tensor(np.sum(train_labels == 0) / np.sum(train_labels == 1), dtype=torch.float32)
@@ -326,48 +328,105 @@ def evaluate(model, data_loader, title="Evaluation"):
 
     y_pred = [1 if p > 0.5 else 0 for p in y_prob]
     
-    #  Calculation of Metrics 
+    # Calculation of Metrics 
     acc = accuracy_score(y_true, y_pred)
     auc = roc_auc_score(y_true, y_prob)
-    prec = precision_score(y_true, y_pred)
-    rec = recall_score(y_true, y_pred)
-    f1_macro = f1_score(y_true, y_pred, average='macro')
+    prec = precision_score(y_true, y_pred, zero_division=0)
+    rec = recall_score(y_true, y_pred, zero_division=0)
+    f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
 
-    print(f"\n {title} ")
-    print(f"Accuracy: {acc:.4f} | AUC: {auc:.4f}")
-    print(f"Precision: {prec:.4f} | Recall: {rec:.4f} | Macro F1 Score: {f1_macro:.4f}")
+    print(f"\n --- {title} ---")
+    print(f"ACC  : {acc:.4f}")
+    print(f"AUC  : {auc:.4f}")
+    print(f"PREC : {prec:.4f}")
+    print(f"REC  : {rec:.4f}")
+    print(f"F1   : {f1_macro:.4f}")
     
-    #  Confusion Matrix 
-    cm = confusion_matrix(y_true, y_pred)
-    disp = ConfusionMatrixDisplay(cm, display_labels=["Non-T2D", "T2D"])
-    disp.plot(cmap='Blues', values_format='d')
-    plt.title(f"{title}: Confusion Matrix")
-    plt.show()
+    # Return values for the loop
+    return acc, auc, prec, rec, f1_macro
 
-# %% ▶️ Run
-model = PatientRiskModel(config)
-trained_model = train_model(model, train_loader, val_loader, config)
+import tqdm
 
-evaluate(trained_model, test_loader, "Test Set Results")
+# %% --- 10 ITERATIONS FOR STABILITY ANALYSIS (MASKED MODEL) ---
+NUM_ITERATIONS = 10
+all_metrics = {'acc': [], 'auc': [], 'prec': [], 'rec': [], 'f1': []}
+external_metrics = {'acc': [], 'auc': [], 'prec': [], 'rec': [], 'f1': []}
 
-# Full Unbalanced evaluation
-full_unbalanced_loader = DataLoader(PatientDataset(X_sequential, X_demographics, y_patient_labels), 
-                                    batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
-evaluate(trained_model, full_unbalanced_loader, "Unbalanced Data Results")
+print(f" Starting {NUM_ITERATIONS} iterations for stability analysis...")
 
-# %% 🧪 External Test Set
-print("\n 🧪 Final Evaluation on External Test Set ")
-try:
-    ext_df = pd.read_csv(config.external_test_path)
-    ext_ids = set(ext_df['PATIENT_ID'].unique())
-    ext_idx = [i for i, pid in enumerate(pids_per_sample) if pid in ext_ids]
+for i in tqdm.tqdm(range(NUM_ITERATIONS), desc="Mask Training Iterations", colour='green'):
+    print(f"\n" + "="*40)
+    print(f" ITERATION {i+1}/{NUM_ITERATIONS} ")
+    print("="*40)
     
-    if ext_idx:
-        X_e_s = [X_sequential[i] for i in ext_idx]
-        X_e_d = [X_demographics[i] for i in ext_idx]
-        y_e = [y_patient_labels[i] for i in ext_idx]
-        evaluate(trained_model, DataLoader(PatientDataset(X_e_s, X_e_d, y_e), batch_size=config.BATCH_SIZE, collate_fn=collate_fn), "External Test")
+    # 1. New dynamic split per iteration
+    current_seed = config.RANDOM_STATE + i
+    sss_iter = StratifiedShuffleSplit(n_splits=1, test_size=config.TEST_SPLIT_SIZE, random_state=current_seed)
+    
+    train_idx, temp_idx = next(sss_iter.split(X_demo_balanced, y_balanced))
+    val_idx = temp_idx[:len(temp_idx) // 2]
+    test_idx = temp_idx[len(temp_idx) // 2:]
+
+    # Get data subsets
+    X_tr_s, X_tr_d, y_tr = get_data(train_idx)
+    X_va_s, X_va_d, y_va = get_data(val_idx)
+    X_te_s, X_te_d, y_te = get_data(test_idx)
+
+    # 2. Re-initialize DataLoaders
+    train_loader_iter = DataLoader(PatientDataset(X_tr_s, X_tr_d, y_tr), batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
+    val_loader_iter = DataLoader(PatientDataset(X_va_s, X_va_d, y_va), batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
+    test_loader_iter = DataLoader(PatientDataset(X_te_s, X_te_d, y_te), batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
+
+    # 3. Model Reset and Training
+    # We must instantiate a new model to reset the weights for each experiment
+    model_iter = PatientRiskModel(config)
+    trained_model_iter = train_model(model_iter, train_loader_iter, val_loader_iter, config)
+
+    # 4. Local Test Evaluation
+    acc, auc, prec, rec, f1 = evaluate(trained_model_iter, test_loader_iter, f"Test Set Iter {i+1}")
+    all_metrics['acc'].append(acc)
+    all_metrics['auc'].append(auc)
+    all_metrics['prec'].append(prec)
+    all_metrics['rec'].append(rec)
+    all_metrics['f1'].append(f1)
+
+    # 5. External Test Evaluation (INSIDE THE LOOP)
+    try:
+        ext_df = pd.read_csv(config.external_test_path)
+        ext_ids = set(ext_df['PATIENT_ID'].astype(str).unique())
+        # Ensure pids are compared as strings to avoid type mismatch
+        ext_idx = [idx for idx, pid in enumerate(pids_per_sample) if str(pid) in ext_ids]
+        
+        if ext_idx:
+            X_e_s = [X_sequential[idx] for idx in ext_idx]
+            X_e_d = [X_demographics[idx] for idx in ext_idx]
+            y_e = [y_patient_labels[idx] for idx in ext_idx]
+            
+            ext_loader = DataLoader(PatientDataset(X_e_s, X_e_d, y_e), batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
+            e_acc, e_auc, e_prec, e_rec, e_f1 = evaluate(trained_model_iter, ext_loader, f"External Test Iter {i+1}")
+            
+            external_metrics['acc'].append(e_acc)
+            external_metrics['auc'].append(e_auc)
+            external_metrics['prec'].append(e_prec)
+            external_metrics['rec'].append(e_rec)
+            external_metrics['f1'].append(e_f1)
+    except Exception as e:
+        print(f" External evaluation error in iteration {i+1}: {e}")
+
+# %% 📊 --- FINAL SUMMARY STATISTICS ---
+print("\n" + "#"*50)
+print(f" MASK MODEL: FINAL RESULTS (OVER {NUM_ITERATIONS} ITERATIONS) ")
+print("#"*50)
+
+print("\n--- INTERNAL TEST SET ---")
+for metric, values in all_metrics.items():
+    print(f"{metric.upper():10}: {np.mean(values):.4f} ± {np.std(values):.4f}")
+
+print("\n--- EXTERNAL TEST SET ---")
+for metric, values in external_metrics.items():
+    if values:
+        print(f"EXT_{metric.upper():6}: {np.mean(values):.4f} ± {np.std(values):.4f}")
     else:
-        print("No external samples found.")
-except Exception as e:
-    print(f" External evaluation error: {e}")
+        print(f"EXT_{metric.upper():6}: No data found.")
+
+print("#"*50)

@@ -29,20 +29,6 @@ WORKFLOW OVERVIEW:
     - Creates output directory if it doesn't exist
     - Saves augmented patient data (with vital features) to 'lab_vitals.pkl'
     - Preserves all data including NaN values for downstream processing
-DEPENDENCIES:
-=============
-- pandas: Data manipulation and aggregation
-- numpy: Numerical operations
-- pickle: Object serialization for data persistence
-- os: File system operations
-- sys: System-level operations (exit)
-- datetime: Date manipulation and timedelta calculations
-NOTES:
-======
-- All file paths use Windows format (raw strings with backslashes)
-- Error handling includes FileNotFoundError and general Exception catches
-- Current implementation calculates MEAN only; extensible for additional statistics
-- The ±15 day window is configurable for different clinical requirements
 """
 import pandas as pd
 import numpy as np
@@ -55,7 +41,7 @@ from datetime import timedelta
 
 
 #%% Load your vitals data
-file_path_vitals = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\deid_vital.csv"
+file_path_vitals = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\deid_vital.csv"
 df_vitals = pd.read_csv(file_path_vitals)
 #df_vitals = pd.read_csv(file_path_vitals, nrows=len(pd.read_csv(file_path_vitals)) // 10)  # Load only 10% of the data for testing
 print(" Vitals data successfully loaded from 'deid_vital.csv'.")
@@ -66,7 +52,7 @@ df_vitals = df_vitals.sort_values(by=['PATIENT_ID', 'Shifted_date'])
 print(" 'Shifted_date' column converted to datetime and data sorted.")
 
 # Load the base patient data
-file_path_base_data = r"preprocessing\output_pickles\patients_lab.pkl"
+file_path_base_data = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\preprocessing\output_pickles\patients_lab.pkl"
 try:
     with open(file_path_base_data, "rb") as file:
         base_patient_data = pickle.load(file)

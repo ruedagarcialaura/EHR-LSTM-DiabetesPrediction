@@ -7,6 +7,7 @@ This script combines demographic data with lab/vital data, calculates feature
 missingness, removes unreliable features, and then normalizes the remaining data.
 (Time Delta calculation has been removed)
 @author: inanc
+@changes by: Laura Rueda
 """
 """
 # Step-by-Step Explanation
@@ -153,7 +154,7 @@ else:
 
 
 #  5. Save Unnormalized Data 
-unnormalized_output_path = os.path.join(base_dir, "patients_filtered_unnormalized.pkl")
+unnormalized_output_path = os.path.join(base_dir, "4_patients_filtered_unnormalized_75.pkl")
 try:
     with open(unnormalized_output_path, "wb") as f:
         pickle.dump(patients_filtered, f)

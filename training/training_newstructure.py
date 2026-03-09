@@ -29,7 +29,6 @@ PIPELINE OVERVIEW:
 5. TRAIN-VALIDATION-TEST SPLIT
     - Uses StratifiedShuffleSplit (test_size=0.3, random_state=42)
     - Splits remaining data 50/50 for validation and test sets
-    - Generates LaTeX-formatted statistics for dataset composition
 6. MODEL ARCHITECTURE
     - LSTM Encoder: Processes sequential visit data (2 layers, 128 hidden units)
     - Demographics Encoder: Processes demographic features (32 hidden units)
@@ -48,30 +47,13 @@ PIPELINE OVERVIEW:
       a) Balanced test set (used for hyperparameter tuning)
       b) Original unbalanced dataset (for real-world performance estimation)
       c) External test set (held-out validation cohort)
-KEY FEATURES:
-=============
-- Dynamic feature dimension detection
-- Handles variable-length visit sequences
-- Balances class imbalance via undersampling
-- Generates reproducible results (fixed random states)
-- Comprehensive logging and visualization
-- LaTeX output for documentation
-- Evaluates on multiple test scenarios
-IMPORTANT NOTES:
-================
-- NaN values are filled with 0.0 (critical to prevent training instability)
-- Diagnosis dates must be >= 2 visits before them to be included in positive class
-- Sequential features are transposed (visits × features) for LSTM input
-- Stratified splitting preserves label proportions across splits
-- External test patient IDs must be in the matched_test.csv file
 """
-
-
 
 """
 Created on Thu Jul 24 09:39:15 2025
 
 @author: inanc
+@changes by: Laura Rueda
 @description: Patient-level T2D risk prediction using a hybrid LSTM-DNN model.
 """
 
@@ -96,21 +78,21 @@ import os
 
 class Config:
     # Data Paths
-    patient_data_path_clinical = r"preprocessing\output_pickles\7_filtered_patient_groups_clinical\regular_patients_1_year.pkl"
-    patient_data_path_standard = r"preprocessing\output_pickles\7_filtered_patient_groups_standard\regular_patients_1_year.pkl"
-    patient_data_path_categorized = r"preprocessing\output_pickles\7_filtered_patient_groups_categorized\regular_patients_1_year.pkl"
-    earliest_dx_path = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\EARLIEST_DX_deid.csv"
-    demographics_path = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\deid_DEM.csv"
-    external_test_path = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\matched_test.csv"
+    patient_data_path_clinical = r"preprocessing\output_pickles\7_filtered_patient_groups_clinical_imputed_75\regular_patients_1_year.pkl"
+    patient_data_path_standard = r"preprocessing\output_pickles\7_filtered_patient_groups_standard_imputed_75\regular_patients_1_year.pkl"
+    patient_data_path_categorized = r"preprocessing\output_pickles\7_filtered_patient_groups_categorized_imputed_75\regular_patients_1_year.pkl"
+    earliest_dx_path = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\EARLIEST_DX_deid.csv"
+    demographics_path = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\deid_DEM.csv"
+    external_test_path = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\matched_test.csv"
 
-    #  CAMBIO AQUÍ: Definir las columnas demográficas exactas 
+    # Define the exact demograph columns 
     DEMO_COLUMNS = [
         'AGE_AT_END', 'ETHNICITY_N', 'ETHNICITY_NI', 'ETHNICITY_Y',
         'GENDER_F', 'GENDER_M', 'GENDER_NI', 'RACE_AS', 'RACE_B',
         'RACE_H', 'RACE_NA', 'RACE_NI', 'RACE_W'
     ]
     
-    # Estos valores se actualizarán automáticamente ahora
+    # These hyperparameters will be set dynamically after loading the data, based on the actual feature dimensions.
     SEQ_INPUT_SIZE = None 
     DEMO_INPUT_SIZE = None
 
@@ -138,9 +120,9 @@ class Config:
 config = Config()
 
 
-# %%   NEW: Load Data and Preprocess Labels
+# %%  Load Data and Preprocess Labels
 try:
-    with open(config.patient_data_path_clinical, "rb") as file:
+    with open(config.patient_data_path_standard, "rb") as file:
         imputed_patients_matrices_all = pickle.load(file)
     df2 = pd.read_csv(config.earliest_dx_path)
     print(" Data files successfully loaded.")
@@ -156,11 +138,11 @@ dx_date_dict = df2_filtered.set_index('PATIENT_ID')['EARLIEST_DX'].dt.date.to_di
 
 
 
-# %%   NEW: Compare T2D Counts from Different Sources 
+# %%   Compare T2D Counts from Different Sources 
 print("\n Comparing T2D Patient Counts ")
 try:
     # Load the demographics data from the CSV file
-    demo_df = pd.read_csv(config.demographics_path) # <<< UPDATED LOADING METHOD
+    demo_df = pd.read_csv(config.demographics_path) 
     
     # Ensure PATIENT_ID is the correct column name
     if 'PATIENT_ID' not in demo_df.columns:
@@ -301,36 +283,6 @@ print(f"\n Data re-sampled with RandomUnderSampler. Original samples: {len(y_pat
 print("New dataset composition (Healthy:T2D ratio should be approx. 1:1):")
 print(pd.Series(y_balanced).value_counts())
 
-'''# %%  Inspect a Single Patient's Timeline 
-print("\n Single Patient Timeline Inspection ")
-
-# <<< CHANGE THIS VALUE to the Patient ID you want to inspect
-patient_id_to_check = 512
-
-# Check if the patient exists in the dataset
-if patient_id_to_check in imputed_patients_matrices_all:
-    
-    # 1. Get the T2D diagnosis date from the dictionary we already created
-    diagnosis_date = dx_date_dict.get(patient_id_to_check)
-    
-    # 2. Get all visit dates from the patient's DataFrame columns
-    patient_df = imputed_patients_matrices_all[patient_id_to_check]
-    visit_dates = [pd.to_datetime(col).date() for col in patient_df.columns]
-    
-    # 3. Print the results
-    print(f"Showing details for PATIENT_ID: {patient_id_to_check}")
-    if diagnosis_date:
-        print(f"  - T2D Diagnosis Date: {diagnosis_date}")
-    else:
-        print("  - T2D Diagnosis Date: Patient is not in the T2D cohort.")
-        
-    print("  - Recorded Visit Dates:")
-    for i, visit_date in enumerate(visit_dates, 1):
-        print(f"    - Visit {i}: {visit_date}")
-        
-else:
-    print(f" Error: Patient with ID {patient_id_to_check} not found in the dataset.")'''
-
 # %%  Train-Validation-Test Split
 sss = StratifiedShuffleSplit(n_splits=1, test_size=config.TEST_SPLIT_SIZE, random_state=config.RANDOM_STATE)
 train_idx, temp_idx = next(sss.split(X_demo_balanced, y_balanced)) # Stratify on demo data
@@ -347,13 +299,13 @@ X_train_seq, X_train_demo, y_train = get_data(train_idx)
 X_val_seq, X_val_demo, y_val = get_data(val_idx)
 X_test_seq, X_test_demo, y_test = get_data(test_idx)
 
-# %%  Split Statistics + LaTeX Section
+# %%  Split Statistics 
 from collections import Counter
 import os
 
 def count_pos_neg(labels):
     c = Counter(labels)
-    return int(c.get(1, 0)), int(c.get(0, 0))  # (pos, neg)
+    return int(c.get(1, 0)), int(c.get(0, 0)) 
 
 n_train, n_val, n_test = len(y_train), len(y_val), len(y_test)
 pos_tr, neg_tr = count_pos_neg(y_train)
@@ -370,21 +322,6 @@ all_balanced_labels = y_balanced
 pos_all, neg_all = count_pos_neg(all_balanced_labels)
 print("\nOverall (balanced set used for splitting):")
 print(f"Total: {len(all_balanced_labels)}  (T2D: {pos_all}, Non-T2D: {neg_all})")
-
-#  LaTeX subsection text 
-latex_section = rf"""
-\subsection{{Cohort Splits}}
-We report the number of patients used for training, validation, and testing after class balancing and patient-level splitting. The training set contains {n_train} patients (T2D: {pos_tr}, Non-T2D: {neg_tr}), the validation set contains {n_val} patients (T2D: {pos_va}, Non-T2D: {neg_va}), and the test set contains {n_test} patients (T2D: {pos_te}, Non-T2D: {neg_te}). In total, the balanced cohort used for splitting includes {len(all_balanced_labels)} patients (T2D: {pos_all}, Non-T2D: {neg_all}). Stratified splitting was applied to preserve label proportions across splits.
-"""
-
-print("\n=== LaTeX subsection (copy to Overleaf) ===")
-print(latex_section)
-
-# Save to a .tex snippet (adjust path if you want it next to your script)
-out_path = os.path.join(os.getcwd(), "split_stats_section.tex")
-with open(out_path, "w", encoding="utf-8") as f:
-    f.write(latex_section)
-print(f"Saved LaTeX subsection to: {out_path}")
 
 # %%  PyTorch Dataset and Dataloader
 class PatientDataset(Dataset):
@@ -532,54 +469,109 @@ def evaluate(model, data_loader, threshold=0.5):
     disp = ConfusionMatrixDisplay(cm, display_labels=["Non-T2D", "T2D"])
     disp.plot(cmap='Blues', values_format='d')
     plt.title("Confusion Matrix (Patient-Level)")
-    #plt.show()
+
+    return acc, auc, prec, rec, f1
+
+import tqdm
 
 # %% --- 10 ITERATIONS TO CHECK MODEL STABILITY ---
 NUM_ITERATIONS = 10
+# Dictionary to store results for each metric across all iterations
 all_metrics = {'acc': [], 'auc': [], 'prec': [], 'rec': [], 'f1': []}
+# Specific list for external results
+external_metrics = {'acc': [], 'auc': [], 'prec': [], 'rec': [], 'f1': []}
 
-print(f" Starting {NUM_ITERATIONS} iterations...")
-# -----------------------
 
-for i in range(NUM_ITERATIONS):
-    print(f"\n--- Iteration {i+1}/{NUM_ITERATIONS} ---")
+print(f"Starting {NUM_ITERATIONS} iterations to calculate performance stability...")
+
+for i in tqdm.tqdm(range(NUM_ITERATIONS), desc="Overall Iterations", colour='cyan'):
+    print(f"\n" + "="*40)
+    print(f" ITERATION {i+1}/{NUM_ITERATIONS} ")
+    print("="*40)
     
+    # 1. Re-run the split with a new dynamic seed
+    # Incrementing the seed ensures a different patient distribution in each loop
     current_seed = config.RANDOM_STATE + i
     sss = StratifiedShuffleSplit(n_splits=1, test_size=config.TEST_SPLIT_SIZE, random_state=current_seed)
-    # Re-ejecuta el split y get_data aquí dentro (copia las líneas de tu split original)
-
-# Run Model Training and Evaluation
-model = PatientRiskModel(config)
-trained_model = train_model(model, train_loader, val_loader, config)
-
-print("\n  Evaluation on Test Set ")
-evaluate(trained_model, test_loader)
-
-print("\n Final Evaluation on Original Unbalanced Data ")
-evaluate(trained_model, unbalanced_loader)
-
-# %% Final Evaluation on External Test Set 
-print("\n Final Evaluation on External Test Set ")
-try:
-    external_test_df = pd.read_csv(config.external_test_path)
-    external_test_ids = set(external_test_df['PATIENT_ID'].unique())
-    print(f"Loaded {len(external_test_ids)} unique patient IDs from the external test file.")
-    external_test_indices = [i for i, pid in enumerate(pids_per_sample) if pid in external_test_ids]
     
-    if external_test_indices:
-        X_ext_seq = [X_sequential[i] for i in external_test_indices]
-        X_ext_demo = [X_demographics[i] for i in external_test_indices]
-        y_ext_labels = [y_patient_labels[i] for i in external_test_indices]
+    # Generate new indices for this specific iteration
+    train_idx, temp_idx = next(sss.split(X_demo_balanced, y_balanced))
+    val_idx = temp_idx[:len(temp_idx) // 2]
+    test_idx = temp_idx[len(temp_idx) // 2:]
 
-        external_dataset = PatientDataset(X_ext_seq, X_ext_demo, y_ext_labels)
-        external_loader = DataLoader(external_dataset, batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
-        
-        print(f"\n Evaluating performance on {len(y_ext_labels)} samples from the external test set ")
-        evaluate(trained_model, external_loader)
-    else:
-        print("No valid samples found for the external test set to evaluate.")
+    # Extract the actual data subsets based on the new indices
+    X_train_seq, X_train_demo, y_train = get_data(train_idx)
+    X_val_seq, X_val_demo, y_val = get_data(val_idx)
+    X_test_seq, X_test_demo, y_test = get_data(test_idx)
 
-except Exception as e:
-    print(f" An error occurred during external evaluation: {e}")
+    # 2. Re-initialize DataLoaders for the current split
+    train_loader = DataLoader(PatientDataset(X_train_seq, X_train_demo, y_train), batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(PatientDataset(X_val_seq, X_val_demo, y_val), batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
+    test_loader = DataLoader(PatientDataset(X_test_seq, X_test_demo, y_test), batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
+
+    # 3. Reset Model and Train
+    # Re-instantiating the model is crucial to reset weights and avoid data leakage
+    model_iter = PatientRiskModel(config)
+    trained_model_iter = train_model(model_iter, train_loader, val_loader, config)
+
+    # 4. Evaluate and Capture metrics
+    # Using the modified evaluate function that now returns numeric values
+    acc, auc, prec, rec, f1 = evaluate(trained_model_iter, test_loader)
+    
+    # Append results to the dictionary lists for final statistical analysis
+    all_metrics['acc'].append(acc)
+    all_metrics['auc'].append(auc)
+    all_metrics['prec'].append(prec)
+    all_metrics['rec'].append(rec)
+    all_metrics['f1'].append(f1)
+
+    try:
+        external_test_df = pd.read_csv(config.external_test_path)
+        external_test_ids = set(external_test_df['PATIENT_ID'].astype(str).unique())
+        processed_pids_str = [str(pid) for pid in pids_per_sample]
+        external_test_indices = [idx for idx, pid_str in enumerate(processed_pids_str) if pid_str in external_test_ids]
+
+        print(f"DEBUG: Unique IDs in External CSV: {len(external_test_ids)}")
+        print(f"DEBUG: IDs in current processed sample: {len(pids_per_sample)}")
+        print(f"DEBUG: Intersection (matches found): {len(external_test_indices)}")
+
+        if external_test_indices:
+            X_ext_seq = [X_sequential[i] for i in external_test_indices]
+            X_ext_demo = [X_demographics[i] for i in external_test_indices]
+            y_ext_labels = [y_patient_labels[i] for i in external_test_indices]
+
+            external_loader = DataLoader(PatientDataset(X_ext_seq, X_ext_demo, y_ext_labels), 
+                                         batch_size=config.BATCH_SIZE, collate_fn=collate_fn)
+            
+            # Evaluate using the model trained in THIS iteration
+            e_acc, e_auc, e_prec, e_rec, e_f1 = evaluate(trained_model_iter, external_loader)
+            
+            # Store external results
+            external_metrics['acc'].append(e_acc)
+            external_metrics['auc'].append(e_auc)
+            external_metrics['prec'].append(e_prec)
+            external_metrics['rec'].append(e_rec)
+            external_metrics['f1'].append(e_f1)
+    except Exception as e:
+        print(f" Error during external evaluation in iteration {i+1}: {e}")
+
+# %%  --- FINAL RESULTS SUMMARY ---
+print("\n" + "#"*50)
+print(f" FINAL PERFORMANCE SUMMARY OVER {NUM_ITERATIONS} ITERATIONS ")
+print("#"*50)
+
+# Calculate and print Mean ± Standard Deviation for each metric
+for metric_name, values in all_metrics.items():
+    mean_val = np.mean(values)
+    std_val = np.std(values)
+    print(f"{metric_name.upper():10}: {mean_val:.4f} ± {std_val:.4f}")
+
+print("\n" + "#"*50)
+print(f" FINAL EXTERNAL TEST PERFORMANCE ({NUM_ITERATIONS} ITERATIONS) ")
+print("#"*50)
+
+for metric_name, values in external_metrics.items():
+    if values: # Only print if external samples were found
+        print(f"EXT_{metric_name.upper():8}: {np.mean(values):.4f} ± {np.std(values):.4f}")
 
 

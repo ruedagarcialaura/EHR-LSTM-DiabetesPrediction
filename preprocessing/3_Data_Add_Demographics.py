@@ -43,6 +43,7 @@ Created on Tue Jun 3 02:47:35 2025
 Revised on Thu Jul 17 04:10:00 2025
 
 @author: inanc
+@changes by: Laura Rueda
 """
 
 import pickle
@@ -53,7 +54,7 @@ from sklearn.preprocessing import OneHotEncoder
 #  1. Load Data 
 # This block now simply reports an error if the file isn't found.
 try:
-    path = r'C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\deid_DEM.csv'
+    path = r'C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\deid_DEM.csv'
     df_demog = pd.read_csv(path)
     print(" Data loaded successfully. Original head:")
     print(df_demog.head())
@@ -128,7 +129,7 @@ output_dir = r"preprocessing\output_pickles"
 os.makedirs(output_dir, exist_ok=True)
 
 # Define the full file path
-file_name = "patients_demograph.pkl"
+file_name = "3_patients_demograph.pkl"
 full_output_path = os.path.join(output_dir, file_name)
 
 try:

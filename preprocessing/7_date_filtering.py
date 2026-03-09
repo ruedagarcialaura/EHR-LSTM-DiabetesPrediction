@@ -59,6 +59,7 @@ Note:
 Created on Tue Jul  1 13:40:00 2025
 
 @author: inanc
+@changes by: Laura Rueda
 
 This script analyzes patient visit data to identify patterns of regular follow-ups.
 It categorizes patients based on visit regularity, overlays Type 2 Diabetes (T2D) diagnosis data,
@@ -75,25 +76,29 @@ from datetime import timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import tqdm
 
 # %% Load Imputed Patient Visit Data
+file_path_clinical = r"preprocessing\output_pickles\5_patients_filtered_clinical_norm_100.pkl"
+file_path_categorized = r"preprocessing\output_pickles\5_patients_filtered_all_categorized_norm_100.pkl"
+file_path_standard= r"preprocessing\output_pickles\5_patients_filtered_standard_norm_100.pkl"
 
-# The user should ensure this path is correct for their system.
-file_path_clinical = r"preprocessing\output_pickles\6_imputed_normalized_data_clinical.pkl"
-file_path_categorized = r"preprocessing\output_pickles\6_imputed_normalized_data_categorized.pkl"
-file_path_standard= r"preprocessing\output_pickles\6_imputed_normalized_data_standard.pkl"
+output_dir_clinical = r"preprocessing\output_pickles\7_filtered_patient_groups_clinical_NoImputed_100"
+output_dir_categorized = r"preprocessing\output_pickles\7_filtered_patient_groups_categorized_NoImputed_100"
+output_dir_standard = r"preprocessing\output_pickles\7_filtered_patient_groups_standard_NoImputed_100"
+
 
 try:
-    with open(file_path_categorized, "rb") as file:
+    with open(file_path_clinical, "rb") as file:
         imputed_patients_matrices_all = pickle.load(file)
         print("File successfully loaded.")
 except FileNotFoundError:
-    print(f"Error: File not found at the specified path.\nPlease check the path: {file_path_categorized}")
+    print(f"Error: File not found at the specified path.\nPlease check the path: {file_path_clinical}")
 except Exception as e:
     print(f"An error occurred while loading the file: {e}")
 
 # %% Load T2D Diagnosis Data
-file_path2 = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\EARLIEST_DX_deid.csv"
+file_path2 = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\EARLIEST_DX_deid.csv"
 try:
     df2 = pd.read_csv(file_path2)
     t2d_pids = set(df2['PATIENT_ID'].unique())
@@ -130,7 +135,7 @@ filtered_data_for_saving = {name: {} for name in intervals.keys()}
 analyzed_pids = []
 
 # Iterate through each patient in the dataset
-for pid, patient_df in imputed_patients_matrices_all.items():
+for pid, patient_df in tqdm.tqdm(imputed_patients_matrices_all.items(), desc="Analyzing Patients", colour='cyan'):
     if patient_df.shape[1] < 2:
         continue
 
@@ -207,13 +212,7 @@ for name, count in patient_counts.items():
     t2d_count = t2d_patient_counts.get(name, 0)
     print(f"Category '{name}': {count} patients total ({t2d_count} with T2D)")
 
-# %%  NEW SECTION: Save Filtered Data to Pickle Files 
-
-# Updated Output Directory
-output_dir_clinical = r"preprocessing\output_pickles\7_filtered_patient_groups_clinical"
-output_dir_categorized = r"preprocessing\output_pickles\7_filtered_patient_groups_categorized"
-output_dir_standard = r"preprocessing\output_pickles\7_filtered_patient_groups_standard"
-
+# %%  Save Filtered Data to Pickle Files
 if not os.path.exists(output_dir_clinical):
     os.makedirs(output_dir_clinical)
     print(f"\nCreated directory: {output_dir_clinical}")
@@ -222,7 +221,7 @@ else:
 
 
 print("\nSaving filtered patient data to pickle files...")
-for name, data_dict in filtered_data_for_saving.items():
+for name, data_dict in tqdm.tqdm(filtered_data_for_saving.items(), desc="Saving Pickle Files", colour='green'):
     if not data_dict:  # Skip empty categories
         print(f"  - Skipping '{name}' (no patients in this category).")
         continue
@@ -239,8 +238,7 @@ for name, data_dict in filtered_data_for_saving.items():
         print(f"  - FAILED to save file for '{name}'. Error: {e}")
 
 
-# %% Plot the Results
-
+'''# %% Plot the Results
 labels = list(patient_counts.keys())
 total_counts = list(patient_counts.values())
 t2d_counts = list(t2d_patient_counts.values())
@@ -274,14 +272,15 @@ def autolabel(rects):
 autolabel(rects1)
 autolabel(rects2)
 
-fig.tight_layout()
+fig.tight_layout()'''
 
-# Save the plot to the same directory
-plot_output_path = os.path.join(output_dir_clinical, "visit_patterns_distribution.png")
+'''# Save the plot to the same directory
+plot_output_path = os.path.join(output_dir_categorized, "visit_patterns_distribution.png")
 try:
     plt.savefig(plot_output_path, dpi=300)
     print(f"\nPlot saved successfully to: {plot_output_path}")
 except Exception as e:
     print(f"Error saving plot: {e}")
+    
+plt.show()'''
 
-plt.show()

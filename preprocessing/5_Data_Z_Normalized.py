@@ -101,10 +101,10 @@ import tqdm
 print(" Clinical Preprocessing and Standard Normalization Script ")
 
 #  1) Paths 
-input_path = r"preprocessing\output_pickles\4_patients_filtered_unnormalized.pkl"
-output_path_clinical = r"preprocessing\output_pickles\5_patients_filtered_clinical_norm.pkl"
-output_path_standard = r"preprocessing\output_pickles\5_patients_filtered_standard_norm.pkl"
-output_path_categorized = r"preprocessing\output_pickles\5_patients_filtered_categorized_norm.pkl"
+input_path = r"preprocessing\output_pickles\4_patients_filtered_unnormalized_100.pkl"
+output_path_clinical = r"preprocessing\output_pickles\5_patients_filtered_clinical_norm_100.pkl"
+output_path_standard = r"preprocessing\output_pickles\5_patients_filtered_standard_norm_100.pkl"
+output_path_categorized = r"preprocessing\output_pickles\5_patients_filtered_categorized_norm_75.pkl" # new script
 
 #  2) Load Data 
 try:
@@ -153,12 +153,12 @@ for key in tqdm.tqdm(all_keys, desc="Grouping features"):
 print(f"Grouped into {len(feature_groups)} canonical features.")
 
 # We create two copies: one for Clinical logic, one for Standard logic
-#clinical_maps = copy.deepcopy(base_patient_maps)
-#print("clinical maps copy created.")
+clinical_maps = copy.deepcopy(base_patient_maps)
+print("clinical maps copy created.")
 #standard_maps = copy.deepcopy(base_patient_maps)
 #print("standard maps copy created.") 
-categorized_maps = copy.deepcopy(base_patient_maps)
-print("categorized maps copy created.")
+#categorized_maps = copy.deepcopy(base_patient_maps)
+#print("categorized maps copy created.")
 
 #  5) CONFIGURATION 
 LOG_TRANSFORM_VARS = {'ALT(SGPT)', 'AST(SGOT)', 'CHOLESTEROL', 'LDL-POCT', 'HDL', 'TRIGLYCERIDE'}
@@ -198,11 +198,9 @@ BINS_THRESHOLDS = {
 }
 
 categorized_features_names = set(BINS_THRESHOLDS.keys())
-#total_skip_list = features_to_skip.union(categorized_features_names)
-
 
 #  6) ROUTE A: Clinical Transformations 
-'''print("\n PHASE 1: Applying Clinical Transformations ")
+print("\n PHASE 1: Applying Clinical Transformations ")
 new_flag_features = defaultdict(dict)
 
 for name, variants in feature_groups.items():
@@ -237,9 +235,9 @@ for pid, flags in new_flag_features.items():
     for flag_name, flag_series in flags.items():
         clinical_maps[pid][(flag_name,)] = flag_series
 print("Clinical flags added.")
-'''
 
-print("\n PHASE 1.5: Applying Clinical Categorization (Binnings) ")
+
+'''print("\n PHASE 1.5: Applying Clinical Categorization (Binnings) ")
 for name, variants in tqdm.tqdm(feature_groups.items(), desc="Processing feature groups"):
     if name in BINS_THRESHOLDS:
         thresholds = BINS_THRESHOLDS[name]
@@ -249,7 +247,7 @@ for name, variants in tqdm.tqdm(feature_groups.items(), desc="Processing feature
                     data_map[key] = data_map[key].apply(
                         lambda x: np.digitize(x, thresholds) if pd.notna(x) else np.nan
                     )
-print("Clinical categorization applied.")
+print("Clinical categorization applied.")'''
 
 #  7) PHASE 2 & 3: Z-Score  
 
@@ -278,17 +276,17 @@ def apply_zscore(target_maps, skip_list):
             if key_tuple in target_maps[pid]:
                 target_maps[pid][key_tuple] = (target_maps[pid][key_tuple] - s_val['mean']) / s_val['std']
 
-#print("Calculating and applying Clinical Z-Scores...")
-#apply_zscore(clinical_maps, features_to_skip)
+print("Calculating and applying Clinical Z-Scores...")
+apply_zscore(clinical_maps, features_to_skip)
 
 #print("Calculating and applying Standard Z-Scores (No Capping/Log)...")
 #apply_zscore(standard_maps, features_to_skip)
 
-print("Calculating and applying Z-scores TO ALL VARIABLES (INCLUDING CATEGORIZED ONES) except for the skip list (GENDER_F', 'GENDER_M', 'GENDER_NI', 'RACE_AS',...)")
-apply_zscore(categorized_maps, features_to_skip)
+#print("Calculating and applying Z-scores TO ALL VARIABLES (INCLUDING CATEGORIZED ONES) except for the skip list (GENDER_F', 'GENDER_M', 'GENDER_NI', 'RACE_AS',...)")
+#apply_zscore(categorized_maps, features_to_skip)
 
-# 9) Visualize results for one patient
 
+'''# 9) Visualize results for one patient
 #1st patient
 first_pid = next(iter(categorized_maps))
 #2nd patient
@@ -300,7 +298,7 @@ num_visits_to_show = min(3, patient_df.shape[1])
 preview_table = patient_df.iloc[:50, :num_visits_to_show]
 
 print(f" TABLE PREVIEW FOR PATIENT (ID: {first_pid}) ")
-print(preview_table.to_string())
+print(preview_table.to_string())'''
 
 #  8) Save Both 
 def finalize_and_save(maps, path):
@@ -313,6 +311,6 @@ def finalize_and_save(maps, path):
         pickle.dump(final_data, f)
     print(f" Saved to: '{path}'")
 
-#finalize_and_save(clinical_maps, output_path_clinical)
+finalize_and_save(clinical_maps, output_path_clinical)
 #finalize_and_save(standard_maps, output_path_standard)
-finalize_and_save(categorized_maps, output_path_categorized)
+#finalize_and_save(categorized_maps, output_path_categorized)

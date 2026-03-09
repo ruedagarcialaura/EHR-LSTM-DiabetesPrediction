@@ -78,17 +78,17 @@ import tqdm
 # 1. Load Z-Score Normalized Data
 # =============================================================================
 input_dir = r"preprocessing\output_pickles"
-file_path_znormalized_standard = os.path.join(input_dir, "5_patients_filtered_standard_norm.pkl")
-file_path_znormalized_categories = os.path.join(input_dir, "5_patients_filtered_categorized_norm.pkl")
-file_path_znormalized_clinical = os.path.join(input_dir, "5_patients_filtered_clinical_norm.pkl")
+file_path_znormalized_standard = os.path.join(input_dir, "5_patients_filtered_standard_norm_75.pkl")
+file_path_znormalized_categories = os.path.join(input_dir, "5_patients_filtered_categorized_norm_75.pkl")
+file_path_znormalized_clinical = os.path.join(input_dir, "5_patients_filtered_clinical_norm_75.pkl")
 
 
 try:
-    with open(file_path_znormalized_categories, "rb") as file:
+    with open(file_path_znormalized_standard, "rb") as file:
         normalized_matrices_with_nans = pickle.load(file)
-    print(f" Z-score normalized data loaded successfully from '{file_path_znormalized_categories}'.")
+    print(f" Z-score normalized data loaded successfully from '{file_path_znormalized_standard}'.")
 except FileNotFoundError:
-    print(f" Error: Input file not found at {file_path_znormalized_categories}")
+    print(f" Error: Input file not found at {file_path_znormalized_standard}")
     sys.exit()
 
 
@@ -236,9 +236,6 @@ for epoch in range(num_epochs):
         break
 
 
-# Apply logic
-print("\n Applying Imputation ")
-#imputed_patients_matrices = run_imputation_and_validation(normalized_matrices_with_nans, model)
 
 
 # 7.2 Imputation on Already categorized features
@@ -314,18 +311,18 @@ plot_missingness(nan_perc)
 # =============================================================================
 final_output_dir = r"preprocessing\output_pickles"
 os.makedirs(final_output_dir, exist_ok=True)
-final_output_path_standard = os.path.join(final_output_dir, "6_imputed_normalized_data_standard.pkl")
-final_output_path_categorized = os.path.join(final_output_dir, "6_imputed_normalized_data_categorized.pkl")
-final_output_path_clinical = os.path.join(final_output_dir, "6_imputed_normalized_data_clinical.pkl")
+final_output_path_standard = os.path.join(final_output_dir, "6_imputed_normalized_data_standard_75.pkl")
+final_output_path_categorized = os.path.join(final_output_dir, "6_imputed_normalized_data_categorized_75.pkl")
+final_output_path_clinical = os.path.join(final_output_dir, "6_imputed_normalized_data_clinical_75.pkl")
 
 
 try:
-    with open(final_output_path_clinical, "wb") as f:
+    with open(final_output_path_standard, "wb") as f:
         pickle.dump(imputed_patients_matrices, f)
-    print(f"\n Final imputed clinical data saved successfully to '{final_output_path_clinical}'")
+    print(f"\n Final imputed standard data saved successfully to '{final_output_path_standard}'")
 except Exception as e:
     print(f"\n Error saving file: {e}")
-
+'''
 # =============================================================================
 # 9) Visualize results for one patient 
 # =============================================================================
@@ -361,7 +358,7 @@ for r in tqdm.tqdm(range(preview.shape[0]), desc="Formatting preview", colour='y
         else:
             preview.iloc[r, c] = f"{val:.2f}"
 
-print(preview.to_string())
+print(preview.to_string())'''
 
 
 

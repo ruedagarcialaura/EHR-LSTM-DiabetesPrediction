@@ -58,6 +58,7 @@ Output:
 Created on Mon Mar 10 12:31:28 2025
 
 @author: inanc
+@changes by: Laura Rueda
 """
 
 import pandas as pd
@@ -68,14 +69,14 @@ import matplotlib.pyplot as plt
 
 
 #%% --- 1. Data Loading and Initial Setup ---
-file_path = r"C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\deid_Lab_out.csv"
+file_path = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\deid_Lab_out.csv"
 df = pd.read_csv(file_path)
 pd.set_option('display.max_columns', None)
 print("Original DataFrame head:")
 print(df.head())
 
 #%% --- 2. Replace SUNQ with LOINC codes ---
-map_path = r'C:\Users\universidad\clases\iit\TFM\code_emirhan_in_order_feb2026\data\dpi_lab_map.csv'
+map_path = r'C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\dpi_lab_map.csv'
 lab_map = pd.read_csv(map_path)
 sunq_to_loinc = dict(zip(lab_map['SUNQUEST_CODE'], lab_map['LOINC_CODE']))
 
@@ -213,7 +214,7 @@ plt.show()
 #%% --- 11. Save the final, corrected dictionary to a specific directory ---
 
 # Define the specific directory
-output_dir = r"preprocessing\output_pickles"
+output_dir = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\preprocessing\output_pickles"
 
 # Create the directory if it does not exist
 os.makedirs(output_dir, exist_ok=True)
