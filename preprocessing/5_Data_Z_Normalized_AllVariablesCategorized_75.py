@@ -1,72 +1,70 @@
+# -*- coding: utf-8 -*-
+"""
+Categorization + Z-Score Normalization Script (Categorized/Binned branch)
+===========================================================================
+MEMORY-EFFICIENT REWRITE (full cohort, no subsampling needed).
+
+The original version of this script processed the full patient population by
+exploding every patient's DataFrame into one pandas.Series per feature (via
+df.iterrows()), storing all of those in a dict, then deep-copying that whole
+structure, and finally building a plain Python list of every single value per
+feature to compute mean/std. With ~190 features x ~289k patients that created
+tens of millions of small Python/pandas objects and duplicated the dataset in
+memory -- this is what froze the machine, not the number of patients.
+
+This version avoids all three problems:
+1. Each patient stays as ONE DataFrame throughout (never split into
+   per-feature Series), transformed in place.
+2. No deepcopy -- we mutate `patient_data` directly, one patient at a time.
+3. Z-score statistics (mean/std) are computed with running sum / sum-of-squares
+   accumulators (a single pass over the data), never materializing a full
+   Python list of every value.
+
+Two passes over the data are still needed (you can't z-score before you know
+the global mean/std), but each pass only ever holds ONE patient's DataFrame
+in memory at a time plus a handful of running totals per feature -- not the
+whole dataset duplicated.
+"""
+
 import re
 import sys
 import pickle
-from collections import defaultdict
 import numpy as np
 import pandas as pd
-import copy
 import tqdm
+from streaming_pickle_utils import save_streamed_patient_dict, load_streamed_patient_dict
 
-print(" Categorization + Z-Score Normalization Script ")
+print(" Categorization + Z-Score Normalization Script (memory-efficient) ")
 
 #  1) Paths 
-input_path = r"preprocessing\output_pickles\4_patients_filtered_unnormalized_100.pkl"
-output_path_categorized = r"preprocessing\output_pickles\5_patients_filtered_all_categorized_norm_100.pkl"
+input_path = r"preprocessing\output_pickles\4_patients_filtered_unnormalized_75.pkl"
+output_path_categorized = r"preprocessing\output_pickles\5_patients_filtered_all_categorized_norm_75.pkl"
 
 #  2) Load Data 
 try:
-    with open(input_path, "rb") as f:
-        patient_data = pickle.load(f)
+    patient_data = load_streamed_patient_dict(input_path, desc="Loading unnormalized data")
     print(f" Loaded data for {len(patient_data)} patients.")
 except Exception as e:
     print(f" Could not load input: {e}")
     sys.exit(1)
 
 #  3) Helpers 
-def _norm_label(x):
-    if isinstance(x, tuple):
-        return tuple(str(p).strip() for p in x)
-    return str(x).strip()
+def feature_name(idx):
+    """Canonical feature name whether the row index is a tuple (NAME, CODE) or a plain string."""
+    return idx[0] if isinstance(idx, tuple) and len(idx) > 0 else idx
 
 _num_regex = re.compile(r'[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?')
 
 def clean_number_like(x):
-    if pd.isna(x): return np.nan
+    if pd.isna(x):
+        return np.nan
     s = str(x).strip()
     m = _num_regex.search(s)
     return float(m.group(0)) if m else np.nan
 
-#  4) Sanitize and Group Features 
-print("Sanitizing data...")
-# We create a base map of cleaned numerical values first
-base_patient_maps = {}
-all_keys = set()
-#patient_data = dict(patient_data)
-patient_data_subsample = dict(list(patient_data.items())[:len(patient_data)//2])  # One-half of original data
-
-for pid, df in tqdm.tqdm(patient_data_subsample.items(), desc="Processing Patients"):
-    # Convert every row to clean floats immediately
-    cleaned_rows = {}
-    for idx, row in df.iterrows():
-        cleaned_rows[_norm_label(idx)] = pd.to_numeric(pd.Series(row).map(clean_number_like), errors='coerce')
-    base_patient_maps[pid] = cleaned_rows
-    all_keys.update(cleaned_rows.keys())
-print(f"Identified {len(all_keys)} unique features across patients.")
-
-feature_groups = defaultdict(list)
-for key in tqdm.tqdm(all_keys, desc="Grouping features"):
-    canonical_name = key[0] if isinstance(key, tuple) and len(key) > 0 else key
-    feature_groups[canonical_name].append(key)
-print(f"Grouped into {len(feature_groups)} canonical features.")
-
-# We create one copy for categorization.  
-categorized_maps = copy.deepcopy(base_patient_maps)
-print("categorized maps copy created.")
-
-#  5) CONFIGURATION 
+#  4) CONFIGURATION 
 features_to_skip = {
-    'GENDER_F', 'GENDER_M', 'GENDER_NI', 'RACE_AS', 'RACE_B', 'RACE_H', 'RACE_NA', 'RACE_NI', 'RACE_W',
-    'ETHNICITY_N', 'ETHNICITY_NI', 'ETHNICITY_Y', 'Time_Delta',
+    'Time_Delta',
     'FLAG_Hypertensive_Crisis', 'FLAG_High_BUN', 'FLAG_Severe_Hyperkalemia', 'FLAG_Hypoxia_Emergency'
 }
 
@@ -89,101 +87,154 @@ BINS_THRESHOLDS = {
 
     # new categorization thresholds added for 7 more features (when >75% missingness eliminated only up to these variables are needed)
     'LDL-POCT': [100, 130, 160, 190],
-    'VITAL_10541029_MEAN': [90, 120, 140, 160],
-    'VITAL_14049215_MEAN': [1.6, 1.9],
-    'VITAL_279181488_MEAN': [150, 180],
-    'VITAL_283303272_MEAN': [50, 86, 101],
-    'VITAL_34506073_MEAN': [12, 20],
-    'VITAL_68924858_MEAN': [90, 95],
+    'VITAL_10541029_MEAN': [120, 130, 140, 181],
+    'VITAL_34506073_MEAN': [12, 21, 31],
+    'VITAL_68924858_MEAN': [89, 90, 95],
 
     # rest of the variables
-    'ALB CONC': [3.4, 5.4],
+    'ALB CONC': [3.5, 5.1],
     'FERRITIN': [20, 250],
-    'INR': [0.8, 1.1, 3.0],
-    'PROTHROMBIN TIME': [11, 13.5],
-    'UR CREATININE': [500, 2000],
-    'UR TOTAL PROTEIN': [150, 500],
+    'INR': [0.8, 1.2, 2.0, 3.1],
+    'PROTHROMBIN TIME': [11, 13.5],  # confirmed correct against ranges_with_links.xlsx (not [11.0, 13.6])
+    'UR CREATININE': [20, 321],
+    'UR TOTAL PROTEIN': [150, 3000],
     'm_Bilirubin.direct': [0.3],
     'VITAL_10155324_MEAN': [1, 4, 7],
-    'VITAL_10155611_MEAN': [1, 7],
-    'VITAL_10155613_MEAN': [0.22, 0.50],
-    'VITAL_10541434_MEAN': [52, 58],
-    'VITAL_10541511_MEAN': [90, 95],
-    'VITAL_10541524_MEAN': [35.0, 37.5],
+    # NOTE: VITAL_10155611_MEAN ("oxygen flow rate") and VITAL_10155613_MEAN
+    # ("FiO2") -- verified against raw data (actual ranges 0-492 and 0-969) --
+    # do NOT match any plausible unit for what the reference spreadsheet
+    # claims they are. These thresholds are copied AS-IS from the (frozen,
+    # already-pretraining) BERT pipeline for parity, even though they push
+    # almost all real values into a single top bin. Known limitation, to be
+    # documented in the thesis rather than "fixed" unilaterally on one side.
+    'VITAL_10155611_MEAN': [1, 24, 32, 46],
+    'VITAL_10155613_MEAN': [22, 36, 61],
+    # NOTE: VITAL_10541434_MEAN is mislabeled "head circumference" in
+    # ranges_with_links.xlsx -- verified against raw data, it's actually SpO2
+    # (99% of values in 92-103%). BERT already bins it with [32, 51], which
+    # (given real values are ~90-114) pushes nearly everything into the top
+    # bin. Kept identical to BERT for parity rather than "corrected" to
+    # proper SpO2 thresholds, since BERT is frozen (mid-pretraining).
+    'VITAL_10541434_MEAN': [32, 51],
+    'VITAL_10541511_MEAN': [60, 101, 131],
+    'VITAL_10541524_MEAN': [36.1, 37.3, 38.0],
     'VITAL_10541596_MEAN': [9, 13],
     'VITAL_14049161_MEAN': [40, 60]
 }
+# NOTE: weight (VITAL_283303272_MEAN), height (VITAL_279181488_MEAN), and Body
+# Surface Area (VITAL_14049215_MEAN) are DELIBERATELY absent from this dict.
+# BERT has no bin threshold for any of the three, so under the parity rule
+# below they get dropped -- do NOT add them back here "just to bin them",
+# that would silently undo the parity decision (this happened once already).
 
-categorized_features_names = set(BINS_THRESHOLDS.keys())
+# Demographic columns that must never be dropped -- both models use them
+# (LSTM as its demographics branch, BERT to compute the per-event dynamic AGE
+# embedding). This matches training_newstructure_masked.py's DEMO_COLUMNS.
+# Demographic columns that must never be dropped -- both models use them.
+# BERT's architecture (confirmed: BertConfig/BEHRTForSequenceClassification,
+# 4 embedding types -- word, position, token_type/segment, age) uses ONLY
+# age, never gender/race/ethnicity in any form. So for parity, AGE_AT_END is
+# the only demographic column now (script 3 no longer even computes the
+# others -- this set just documents/enforces that).
+DEMO_COLUMNS = {'AGE_AT_END'}
 
+# BERT's pipeline only ever tokenizes labs/vitals that have a defined bin
+# threshold -- anything else is silently dropped from its sequence. For a
+# fair comparison, the LSTM should not have access to information the BERT
+# never gets either. Rather than maintaining a manual list, this is enforced
+# generically below: during Pass 1, any feature that is neither in
+# BINS_THRESHOLDS (kept, binned) nor in features_to_skip (kept, demographics)
+# is dropped. This automatically excludes things like weight/height/BSA and
+# less common labs (e.g. LDL Calculated, Urine Ketones) that BERT never sees,
+# without needing to keep a separate list in sync by hand.
 
-print("\n PHASE 1: Applying Clinical Categorization (Binnings) ")
-for name, variants in tqdm.tqdm(feature_groups.items(), desc="Processing feature groups"):
-    if name in BINS_THRESHOLDS:
-        thresholds = BINS_THRESHOLDS[name]
-        for pid, data_map in tqdm.tqdm(categorized_maps.items(), desc="Categorizing data"):
-            for key in variants:
-                if key in data_map:
-                    data_map[key] = data_map[key].apply(
-                        lambda x: np.digitize(x, thresholds) if pd.notna(x) else np.nan
-                    )
-print("Clinical categorization applied.")
+#  5) PASS 1: clean + bin each patient in place, accumulate z-score stats 
+print("\n PASS 1: Cleaning, binning, and accumulating z-score statistics ")
 
-#  7) PHASE 2 & 3: Z-Score  
+# Classify every feature ONCE (from the canonical feature set, which is
+# uniform across patients after step 4's global >75%-missingness filter and
+# step 2b's fixed top-500 DX columns) instead of re-checking set membership
+# for every row of every patient (521 rows x 92k patients = ~48M redundant
+# checks otherwise). This turns three O(rows x patients) Python loops into
+# three small O(~20) lists reused across all patients.
+sample_df = next(iter(patient_data.values()))
+all_feature_names = [feature_name(idx) for idx in sample_df.index]
 
-def apply_zscore(target_maps, skip_list):
-    # Calculate global stats
-    stats = {}
-    current_keys = set().union(*(m.keys() for m in target_maps.values()))
-    
-    for key_tuple in tqdm.tqdm(current_keys, desc="Processing variables for z-score", colour = 'pink'):
-        name = key_tuple[0] if isinstance(key_tuple, tuple) else key_tuple
-        if name in skip_list: continue
-        
-        all_vals = []
-        for pid in target_maps:
-            if key_tuple in target_maps[pid]:
-                all_vals.extend(target_maps[pid][key_tuple].dropna().tolist())
-        
-        if all_vals:
-            s = pd.Series(all_vals)
-            std = s.std()
-            stats[key_tuple] = {'mean': s.mean(), 'std': 1.0 if (pd.isna(std) or std < 1e-6) else std}
-    
-    # Apply normalization
-    for pid in tqdm.tqdm(target_maps.keys(), desc="Normalizing patients with z-score", colour = 'green'):
-        for key_tuple, s_val in stats.items():
-            if key_tuple in target_maps[pid]:
-                target_maps[pid][key_tuple] = (target_maps[pid][key_tuple] - s_val['mean']) / s_val['std']
+bin_names = [n for n in all_feature_names if n in BINS_THRESHOLDS]
+passthrough_names = [n for n in all_feature_names if n in features_to_skip or str(n).startswith('DX_')]
+demo_names = [n for n in all_feature_names if n in DEMO_COLUMNS]
+keep_names = set(bin_names) | set(passthrough_names) | set(demo_names)
+drop_names = [n for n in all_feature_names if n not in keep_names]
+zscore_names = bin_names + demo_names  # binned features + demographics get z-scored; passthrough (DX/flags) doesn't
 
+print(f" Feature classification (from {len(all_feature_names)} total features): "
+      f"{len(bin_names)} binned, {len(demo_names)} demographic, {len(passthrough_names)} passthrough (DX/flags), "
+      f"{len(drop_names)} to drop (not in BERT's vocabulary).")
 
-print("Calculating and applying Z-scores TO ALL VARIABLES (INCLUDING CATEGORIZED ONES) except for the skip list (GENDER_F', 'GENDER_M', 'GENDER_NI', 'RACE_AS',...)")
-apply_zscore(categorized_maps, features_to_skip)
+running_sum = {}    # idx -> running sum of known values
+running_sumsq = {}  # idx -> running sum of squares of known values
+running_count = {}  # idx -> running count of known values
 
-# 9) Visualize results for one patient
+for pid in tqdm.tqdm(list(patient_data.keys()), desc="Pass 1/2: clean + bin", colour='cyan'):
+    df = patient_data[pid]
 
-#1st patient
-first_pid = next(iter(categorized_maps))
-#2nd patient
-second_pid = next(iter(list(categorized_maps.keys())[1:]))
+    # Vectorized numeric cleaning across the WHOLE patient DataFrame at once
+    # (instead of exploding it into one Series per row/feature).
+    df = df.apply(lambda col: col.map(clean_number_like))
 
-patient_df = pd.DataFrame.from_dict(categorized_maps[first_pid], orient='index')
-patient_df = patient_df.sort_index(key=lambda idx: idx.map(str))
-num_visits_to_show = min(3, patient_df.shape[1])
-preview_table = patient_df.iloc[:50, :num_visits_to_show]
+    # Drop features BERT never sees, for a fair comparison -- a single
+    # vectorized call using the precomputed list, instead of rebuilding the
+    # drop decision from scratch for every row of every patient.
+    if drop_names:
+        df = df.drop(index=drop_names, errors='ignore')
 
-print(f" TABLE PREVIEW FOR PATIENT (ID: {first_pid}) ")
-print(preview_table.to_string())
+    # Apply clinical binning -- only touches the ~20 rows that need it.
+    for name in bin_names:
+        if name in df.index:
+            thresholds = BINS_THRESHOLDS[name]
+            df.loc[name] = df.loc[name].apply(lambda x: np.digitize(x, thresholds) if pd.notna(x) else np.nan)
 
-#  8) Save Both 
-def finalize_and_save(maps, path):
-    final_data = {}
-    for pid, data_map in tqdm.tqdm(maps.items(), desc="Finalizing and saving data", colour='cyan'):
-        df = pd.DataFrame.from_dict(data_map, orient='index')
-        df = df.sort_index(key=lambda idx: idx.map(str))
-        final_data[pid] = df
-    with open(path, "wb") as f:
-        pickle.dump(final_data, f)
-    print(f" Saved to: '{path}'")
+    # Overwrite in place -- the old raw DataFrame is dropped/garbage-collected here,
+    # so we never hold both the raw and cleaned versions at once.
+    patient_data[pid] = df
 
-finalize_and_save(categorized_maps, output_path_categorized)
+    # Accumulate running stats -- only over the ~20 features that get z-scored.
+    for name in zscore_names:
+        if name not in df.index:
+            continue
+        vals = df.loc[name].to_numpy(dtype='float64')
+        vals = vals[~np.isnan(vals)]
+        if vals.size == 0:
+            continue
+        running_sum[name] = running_sum.get(name, 0.0) + vals.sum()
+        running_sumsq[name] = running_sumsq.get(name, 0.0) + np.square(vals).sum()
+        running_count[name] = running_count.get(name, 0) + vals.size
+
+print(f"Accumulated statistics for {len(running_count)} features.")
+if drop_names:
+    print(f"\nDropped {len(drop_names)} feature(s) not present in BERT's vocabulary (no bin threshold there):")
+    for name in sorted(drop_names):
+        print(f"  - {name}")
+
+#  6) Finalize mean/std per feature 
+stats = {}
+for idx, count in running_count.items():
+    mean = running_sum[idx] / count
+    var = max(running_sumsq[idx] / count - mean ** 2, 0.0)  # E[x^2] - E[x]^2, clipped at 0 for float safety
+    std = var ** 0.5
+    stats[idx] = {'mean': mean, 'std': 1.0 if (std < 1e-6 or np.isnan(std)) else std}
+
+#  7) PASS 2: apply z-score in place and finalize row order 
+print("\n PASS 2: Applying z-score normalization ")
+
+for pid in tqdm.tqdm(list(patient_data.keys()), desc="Pass 2/2: z-score", colour='green'):
+    df = patient_data[pid]
+    for idx, s in stats.items():
+        if idx in df.index:
+            df.loc[idx] = (df.loc[idx] - s['mean']) / s['std']
+    patient_data[pid] = df.sort_index(key=lambda ix: ix.map(str))
+
+#  8) Save 
+print(f"\nSaving to: {output_path_categorized}")
+save_streamed_patient_dict(patient_data, output_path_categorized, desc="Saving")
+print(" Saved successfully.")

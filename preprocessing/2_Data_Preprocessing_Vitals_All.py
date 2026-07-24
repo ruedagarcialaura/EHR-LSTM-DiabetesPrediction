@@ -2,9 +2,10 @@
 WORKFLOW OVERVIEW:
 ==================
 1. DATA LOADING & INITIALIZATION:
-    - Loads vital signs data from 'deid_vital.csv'
+    - Loads vital signs data from 'deid_vital.csv' (CHUNKED, filtered to the
+      cohort already present in patients_lab.pkl -- avoids loading the full
+      ~83M-row file and avoids grouping data for patients we'll discard anyway)
     - Converts 'Shifted_date' column to datetime format
-    - Sorts data by PATIENT_ID and date for temporal consistency
     - Loads pre-existing base patient data from 'patients_lab.pkl' (pickle format)
     - This base data contains structured patient visit information
 2. VITAL CODES DISCOVERY:
@@ -13,7 +14,7 @@ WORKFLOW OVERVIEW:
     - This approach makes the script adaptable to different data sources
 3. FEATURE ENGINEERING & AGGREGATION:
     - For each patient and their visits in the base data:
-      * Extracts vital measurements within a ±15 day window around each visit date
+      * Extracts vital measurements from a 15-day BACKWARD-ONLY window before each visit date (never after, to avoid temporal leakage)
       * Calculates mean statistics for all vital codes in that window
       * Creates new feature rows with names following pattern: "VITAL_CODE_MEAN"
     - Aggregates all computed features and appends them to the patient's visit matrix
@@ -27,7 +28,7 @@ WORKFLOW OVERVIEW:
     - Can be uncommented to enable automatic feature removal based on data quality threshold
 5. OUTPUT & PERSISTENCE:
     - Creates output directory if it doesn't exist
-    - Saves augmented patient data (with vital features) to 'lab_vitals.pkl'
+    - Saves augmented patient data (with vital features) to '2_lab_vitals.pkl'
     - Preserves all data including NaN values for downstream processing
 """
 import pandas as pd
@@ -35,24 +36,14 @@ import numpy as np
 import pickle
 import os
 import sys
+import tqdm
 from datetime import timedelta
 
 
-
-
-#%% Load your vitals data
-file_path_vitals = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\data\deid_vital.csv"
-df_vitals = pd.read_csv(file_path_vitals)
-#df_vitals = pd.read_csv(file_path_vitals, nrows=len(pd.read_csv(file_path_vitals)) // 10)  # Load only 10% of the data for testing
-print(" Vitals data successfully loaded from 'deid_vital.csv'.")
-
-# Ensure 'Shifted_date' is in datetime format and sort the DataFrame
-df_vitals['Shifted_date'] = pd.to_datetime(df_vitals['Shifted_date'])
-df_vitals = df_vitals.sort_values(by=['PATIENT_ID', 'Shifted_date'])
-print(" 'Shifted_date' column converted to datetime and data sorted.")
-
-# Load the base patient data
-file_path_base_data = r"C:\Users\universidad\clases\iit\TFM\diabetesRiskPrediction\preprocessing\output_pickles\patients_lab.pkl"
+#%% Load the base patient data FIRST -- we need the cohort's patient IDs
+# before reading vitals, so we can filter the (huge) vitals file down to only
+# the patients we actually care about instead of loading everything.
+file_path_base_data = r"C:\Users\universidad\clases\iit\TFM\MODELO-LSTM\diabetesRiskPrediction\preprocessing\output_pickles\patients_lab.pkl"
 try:
     with open(file_path_base_data, "rb") as file:
         base_patient_data = pickle.load(file)
@@ -64,6 +55,45 @@ except Exception as e:
     print(f" An error occurred loading the pickle file: {e}")
     sys.exit() # Corrected from exit()
 
+valid_patient_ids = set(base_patient_data.keys())
+print(f" Cohort has {len(valid_patient_ids)} patients -- vitals will be filtered to only these.")
+
+#%% Load your vitals data IN CHUNKS, keeping only rows for patients in our cohort.
+# This is the same technique used in verify_ambiguous_vitals.py, which handled
+# an 83M-row file fine this way -- loading the whole file at once (the old
+# approach) is what was freezing the machine.
+file_path_vitals = r"C:\Users\universidad\clases\iit\TFM\MODELO-LSTM\diabetesRiskPrediction\data\deid_vital.csv"
+CHUNK_SIZE = 500_000
+matches = []
+rows_scanned = 0
+try:
+    reader = pd.read_csv(
+        file_path_vitals,
+        usecols=["PATIENT_ID", "VITAL_CODE", "MEASUREMENT", "Shifted_date"],
+        chunksize=CHUNK_SIZE,
+    )
+except ValueError:
+    reader = pd.read_csv(file_path_vitals, chunksize=CHUNK_SIZE)
+
+print("Scanning vitals data in chunks (keeping only cohort patients)...")
+for chunk in reader:
+    rows_scanned += len(chunk)
+    subset = chunk[chunk["PATIENT_ID"].isin(valid_patient_ids)]
+    if not subset.empty:
+        matches.append(subset)
+    print(f"  ...scanned {rows_scanned:,} rows so far", end="\r")
+print(f"\nFinished scanning {rows_scanned:,} rows.")
+
+df_vitals = pd.concat(matches, ignore_index=True) if matches else pd.DataFrame(
+    columns=["PATIENT_ID", "VITAL_CODE", "MEASUREMENT", "Shifted_date"]
+)
+print(f" Kept {len(df_vitals):,} vitals rows for the {len(valid_patient_ids)} cohort patients.")
+
+# Ensure 'Shifted_date' is in datetime format and sort the DataFrame
+df_vitals['Shifted_date'] = pd.to_datetime(df_vitals['Shifted_date'])
+df_vitals = df_vitals.sort_values(by=['PATIENT_ID', 'Shifted_date'])
+print(" 'Shifted_date' column converted to datetime and data sorted.")
+
 #%% Dynamically discover all unique vitals from the data file
 unique_vitals = df_vitals['VITAL_CODE'].unique()
 vital_row_map = {code: f"VITAL_{code.split(':')[-1]}" for code in unique_vitals}
@@ -74,15 +104,22 @@ stats_to_calc = ["mean"]
 patient_with_vitals = {}
 
 # Main processing loop
-for pid, patient_vitals_df in df_vitals.groupby("PATIENT_ID"):
+for pid, patient_vitals_df in tqdm.tqdm(df_vitals.groupby("PATIENT_ID"),
+                                         desc="Aggregating vitals per patient", colour='cyan'):
     if pid not in base_patient_data:
         continue
     processed_visit_matrix = base_patient_data[pid].copy()
     patient_visit_dates = pd.to_datetime(processed_visit_matrix.columns)
     temp_new_vital_rows = {}
     for visit_date in patient_visit_dates:
+        # Backward-only window (was previously +/-15 days, symmetric). A visit
+        # can now only pick up vitals measured UP TO 15 days BEFORE it, never
+        # after -- this avoids a visit labeled "pre-diagnosis" from silently
+        # picking up vitals actually recorded after the diagnosis date (which
+        # could reflect treatment already started). This also matches BERT's
+        # censoring rule of never looking at events on/after the diagnosis date.
         start_date = visit_date - pd.Timedelta(days=15)
-        end_date = visit_date + pd.Timedelta(days=15)
+        end_date = visit_date
         mask = patient_vitals_df["Shifted_date"].between(start_date, end_date)
         window_vitals = patient_vitals_df.loc[mask]
 
@@ -130,7 +167,7 @@ print(" Vital sign feature engineering complete (Mean only).")
 #     vitals_to_remove = missing_data_df[missing_data_df['Missing Percentage'] > 50]['Vital Statistic'].tolist()
     
 #     if vitals_to_remove:
-#         print(f"🗑️ Identifying {len(vitals_to_remove)} vital features to remove due to >50% missingness.")
+#         print(f"identifying {len(vitals_to_remove)} vital features to remove due to >50% missingness.")
         
 #         patients_filtered = {}
 #         for pid, data in patient_with_vitals.items():
@@ -142,7 +179,7 @@ print(" Vital sign feature engineering complete (Mean only).")
 #         print(" No vital features exceeded the 50% missingness threshold. No features were removed.")
 #         patients_filtered = patient_with_vitals
 # else:
-#     print("⚠️ No vitals data to process for filtering.")
+#     print(" No vitals data to process for filtering.")
 #     patients_filtered = patient_with_vitals
 
 
@@ -152,7 +189,9 @@ os.makedirs(output_dir, exist_ok=True)
 print(f" Output will be saved to: {output_dir}")
 
 # Save the augmented data (with NaNs, without any filtering)
-output_path = os.path.join(output_dir, "lab_vitals.pkl")
+# NOTE: filename prefixed with "2_" to match what step 4 (Data_Combine_BeforeImputation)
+# expects. Previously this saved as "lab_vitals.pkl", which broke the pipeline chain.
+output_path = os.path.join(output_dir, "2_lab_vitals.pkl")
 try:
     with open(output_path, "wb") as f:
         #  FIX: Save patient_with_vitals instead of the non-existent patients_filtered 
@@ -160,3 +199,5 @@ try:
     print(f" Final augmented data saved successfully to {output_path}")
 except Exception as e:
     print(f" Error saving the file: {e}")
+
+    

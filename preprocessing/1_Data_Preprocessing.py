@@ -66,6 +66,7 @@ import numpy as np
 import pickle
 import os
 import matplotlib.pyplot as plt
+import tqdm
 
 
 #%% --- 1. Data Loading and Initial Setup ---
@@ -120,6 +121,12 @@ missing_lab_codes = df.groupby('LAB_CODE')['RESULT'].apply(lambda x: x.isna().al
 # ~df means keep rows where LAB_CODE is not in missing_lab_codes
 df = df[~df['LAB_CODE'].isin(missing_lab_codes)]
 print(f"\nLAB_CODES removed due to all NaN values: {list(missing_lab_codes)}")
+
+# Also drop those same codes from the master list used for reindexing (step 8).
+# Previously unique_labs_df_2 was built in step 4, BEFORE this removal, so the
+# "removed" codes were silently resurrected as empty (all-NaN) rows in every
+# patient's matrix during reindexing -- this keeps the two consistent.
+unique_labs_df_2 = unique_labs_df_2[~unique_labs_df_2['LAB_CODE'].isin(missing_lab_codes)].reset_index(drop=True)
 #convert RESULT to numeric, coercing errors to NaN
 df['RESULT'] = pd.to_numeric(df['RESULT'], errors='coerce')
 
@@ -129,7 +136,7 @@ patients_matrices = {}
 df['Shifted_date'] = pd.to_datetime(df['Shifted_date'])
 gap_threshold = 30
 
-for pid, patient_df in df.groupby("PATIENT_ID"):
+for pid, patient_df in tqdm.tqdm(df.groupby("PATIENT_ID"), desc="Step 6/11: Grouping visits per patient", colour='cyan'):
     patient_df = patient_df.sort_values('Shifted_date').copy()
     patient_df['gap_days'] = patient_df['Shifted_date'].diff().dt.days.fillna(0)
     patient_df['visit_group'] = (patient_df['gap_days'] > gap_threshold).cumsum()
@@ -162,7 +169,7 @@ all_vitals_index = pd.MultiIndex.from_frame(unique_labs_df_2[['LAB_NAME', 'LAB_C
 # Reindex each patient's DataFrame to include all unique vitals.
 # This ensures every patient matrix has the same set of rows, filling missing ones with NaN.
 reindexed_patients_matrices = {}
-for pid, df_pivot in filtered_patients_matrices.items():
+for pid, df_pivot in tqdm.tqdm(filtered_patients_matrices.items(), desc="Step 8/11: Reindexing patients", colour='green'):
     # Reindex the patient's DataFrame against the master list of all vitals
     df_reindexed = df_pivot.reindex(all_vitals_index)
     
@@ -190,7 +197,7 @@ else:
 
 #%% --- 10. Visualization of patient counts per lab code (using the original filtered data) ---
 lab_code_counts = {}
-for pid, df_pivot in filtered_patients_matrices.items():
+for pid, df_pivot in tqdm.tqdm(filtered_patients_matrices.items(), desc="Step 10/11: Counting patients per lab code", colour='magenta'):
     patient_lab_codes = df_pivot.index.get_level_values('LAB_CODE').unique()
     for lab_code in patient_lab_codes:
         if lab_code not in lab_code_counts:

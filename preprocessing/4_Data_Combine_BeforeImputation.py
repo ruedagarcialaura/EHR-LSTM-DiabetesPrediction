@@ -58,13 +58,14 @@ import os
 import sys
 from sklearn.preprocessing import MinMaxScaler
 import tqdm
+from streaming_pickle_utils import save_streamed_patient_dict, load_streamed_patient_dict
 
 #  1. Define Directories & Load Data 
 # All inputs and outputs are in this specific folder
 base_dir = r"preprocessing\output_pickles"
 
 file_path_demographics = os.path.join(base_dir, "3_patients_demograph.pkl")
-file_path_lab_vitals = os.path.join(base_dir, "2_lab_vitals.pkl")
+file_path_lab_vitals = os.path.join(base_dir, "2b_lab_vitals_dx.pkl")  # now includes DX flags (see 2b_Data_Preprocessing_DX.py)
 
 # Ensure the directory exists for saving later
 os.makedirs(base_dir, exist_ok=True)
@@ -74,8 +75,11 @@ try:
         demographics_df = pickle.load(file)
     print(" Demographics file loaded successfully.")
 
-    with open(file_path_lab_vitals, "rb") as file:
-        patient_matrices = pickle.load(file)
+    # Uses the streaming loader (auto-detects old- or new-style pickle) --
+    # this file now includes DX flags and can be large enough that a plain
+    # single pickle.load() risks a MemoryError, same as the one hit when
+    # 2b_Data_Preprocessing_DX.py originally tried to save it in one shot.
+    patient_matrices = load_streamed_patient_dict(file_path_lab_vitals, desc="Loading labs+vitals+DX")
     print(" Lab/Vitals file loaded successfully.")
 
 except FileNotFoundError as e:
@@ -85,14 +89,52 @@ except Exception as e:
     print(f" An error occurred while loading files: {e}")
     sys.exit()
 
+#  1b. Flatten label row indices (fixes a mixed-index bug) 
+# Labs (from step 1) have a 2-level MultiIndex row label: (LAB_NAME, LAB_CODE).
+# Vitals/DX/demographics (steps 2/2b/3) have plain single-level string labels.
+# pd.concat-ing the two doesn't keep a proper MultiIndex -- the result is a
+# mixed index of tuples and strings, which breaks `.loc[idx]` later (a tuple
+# label like ('TROPONIN I', 'LOINC:10839-9') gets misread as "row=TROPONIN I,
+# column=LOINC:10839-9" instead of one label, since the index isn't formally
+# a pd.MultiIndex).
+#
+# Dropping LAB_CODE naively (keeping LAB_NAME only) is NOT safe on its own:
+# step 1's manual naming corrections deliberately unify multiple LAB_CODEs
+# under one LAB_NAME (e.g. two historical codes for the same test), so a
+# single patient can legitimately have two rows with the same LAB_NAME. That
+# needs a real MERGE (not just relabeling), or you'd end up with duplicate
+# index labels -- which is exactly what caused the next crash (`.loc[idx]`
+# returning a 2-row DataFrame instead of one Series). Merging with the mean
+# of whatever's non-null per visit combines the two historical codes'
+# readings for the same test into one row, the same way multiple vitals
+# readings already get mean-aggregated within a visit window.
+n_merged = 0
+for pid in tqdm.tqdm(list(patient_matrices.keys()), desc="Flattening + merging lab index", colour='cyan'):
+    df = patient_matrices[pid]
+    new_index = [idx[0] if isinstance(idx, tuple) else idx for idx in df.index]
+    if len(new_index) != len(set(new_index)):
+        n_merged += 1
+        df.index = new_index
+        df = df.groupby(level=0).mean()  # merges duplicate-named rows, skipping NaN
+    else:
+        df.index = new_index
+    patient_matrices[pid] = df
+
+print(f" Flattened lab row index for all patients ({n_merged} patients had duplicate "
+      f"LAB_NAMEs from multiple historical LAB_CODEs, now merged by mean).")
+
 #  2. Combine Demographic and Lab/Vital Data 
-patient_data_combined = {}
+# Mutates patient_matrices IN PLACE instead of building a separate
+# patient_data_combined dict, for the same reason as the filtering step below
+# -- avoids two full copies of the (now DX-inflated) dataset being resident
+# in memory at once.
 demographics_df.index = demographics_df.index.astype(int)  # Ensure index is integer for matching
 
-# Iterate through each patient's lab/vital data
+patients_to_drop = []
 for pid, lab_vital_df in tqdm.tqdm(patient_matrices.items(), desc="Combining patient data", colour='blue'):
     # Check if the patient exists in the demographic data
     if pid not in demographics_df.index:
+        patients_to_drop.append(pid)
         continue
 
     # Get the demographic data for the current patient (it's a Series)
@@ -104,29 +146,46 @@ for pid, lab_vital_df in tqdm.tqdm(patient_matrices.items(), desc="Combining pat
         index=demo_row.index
     )
 
-    # Combine the lab/vital data with the new demographic DataFrame
-    combined_df = pd.concat([lab_vital_df, demo_as_df])
-    patient_data_combined[pid] = combined_df
+    # Combine the lab/vital data with the new demographic DataFrame, in place
+    patient_matrices[pid] = pd.concat([lab_vital_df, demo_as_df])
+
+# Drop patients with no demographic match (can't do this while iterating above)
+for pid in patients_to_drop:
+    del patient_matrices[pid]
+
+patient_data_combined = patient_matrices  # same dict, just renamed for clarity below
 
 print(f" Combined demographic data for {len(patient_data_combined)} patients.")
 
-#  3. Calculate Feature Missingness 
-# Concatenate all patient data into one large DataFrame for global analysis
+#  3. Calculate Feature Missingness (memory-efficient, streaming) 
+# NOTE: the original approach concatenated every patient's DataFrame side-by-side
+# into ONE giant DataFrame (columns = total visits across the whole cohort --
+# potentially millions of columns). With the full patient population that risks
+# freezing the machine the same way the normalization scripts did. Instead, we
+# accumulate NaN counts and total counts per feature incrementally, one patient
+# at a time, never holding more than one patient's data in memory at once.
 if not patient_data_combined:
     print(" No patient data to process after combining. Exiting.")
     sys.exit()
 
-all_patient_data_df = pd.concat(list(patient_data_combined.values()), axis=1)
+nan_counts = {}
+total_counts = {}
+for pid, df in tqdm.tqdm(patient_data_combined.items(), desc="Calculating missingness", colour='yellow'):
+    # Vectorized: one call gives NaN counts for every row at once, instead of
+    # calling df.loc[idx] once per row (571 rows x 92k patients = ~53M slow
+    # indexed lookups -- this was the actual cause of the ~1h runtime here).
+    row_nan_counts = df.isna().sum(axis=1)
+    n_cols = df.shape[1]
+    for idx, nan_count in row_nan_counts.items():
+        nan_counts[idx] = nan_counts.get(idx, 0) + int(nan_count)
+        total_counts[idx] = total_counts.get(idx, 0) + n_cols
 
-# Calculate the missing percentage for each feature (row)
-nan_counts = all_patient_data_df.isna().sum(axis=1)
-total_visits = all_patient_data_df.shape[1]
-missing_percentage = (nan_counts / total_visits) * 100
+missing_percentage = {idx: (nan_counts[idx] / total_counts[idx]) * 100 for idx in nan_counts}
 
 # Create and display the missingness report
 missing_report_df = pd.DataFrame({
-    'Feature': missing_percentage.index,
-    'Missing_Percentage': missing_percentage.values
+    'Feature': list(missing_percentage.keys()),
+    'Missing_Percentage': list(missing_percentage.values())
 }).sort_values(by='Missing_Percentage', ascending=False).reset_index(drop=True)
 
 print("\n Feature Missingness Report ")
@@ -140,12 +199,14 @@ features_to_remove = missing_report_df[missing_report_df['Missing_Percentage'] >
 if features_to_remove:
     print(f" Identifying {len(features_to_remove)} features to remove due to >75% missingness.")
 
-    # Create a new dictionary for the filtered data
-    patients_filtered = {}
-    for pid, data in tqdm.tqdm(patient_data_combined.items(), desc="Filtering features", colour='magenta'):
-        # Drop the identified rows from each patient's DataFrame
-        filtered_data = data.drop(labels=features_to_remove, errors='ignore')
-        patients_filtered[pid] = filtered_data
+    # Mutate patient_data_combined IN PLACE instead of building a separate
+    # patients_filtered dict -- with DX now adding ~500 rows per patient,
+    # having both the original and filtered versions fully resident in
+    # memory at once risks another MemoryError, same shape of problem as
+    # the one hit when saving 2b_Data_Preprocessing_DX.py's output.
+    for pid in tqdm.tqdm(list(patient_data_combined.keys()), desc="Filtering features", colour='magenta'):
+        patient_data_combined[pid] = patient_data_combined[pid].drop(labels=features_to_remove, errors='ignore')
+    patients_filtered = patient_data_combined
 
     print(f" Successfully removed high-missingness features from all {len(patients_filtered)} patients.")
 else:
@@ -156,10 +217,7 @@ else:
 #  5. Save Unnormalized Data 
 unnormalized_output_path = os.path.join(base_dir, "4_patients_filtered_unnormalized_75.pkl")
 try:
-    with open(unnormalized_output_path, "wb") as f:
-        pickle.dump(patients_filtered, f)
+    save_streamed_patient_dict(patients_filtered, unnormalized_output_path, desc="Saving unnormalized data")
     print(f" Unnormalized data successfully saved to:\n{unnormalized_output_path}")
 except Exception as e:
     print(f" Error saving the unnormalized file: {e}")
-
-
